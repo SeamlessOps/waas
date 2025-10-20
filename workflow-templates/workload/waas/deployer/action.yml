@@ -79,6 +79,8 @@ runs:
         service: ${{ inputs.service }}
         environment: ${{ inputs.environment }}
         git_token: ${{ env.GIT_TOKEN }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        git_ref: ${{ inputs.git_ref }}
     
     - name: Set start timestamp
       id: start-time
@@ -157,6 +159,8 @@ runs:
         dockerfile: ${{ inputs.dockerfile }}
         environment: ${{ inputs.environment }}
         git_token: ${{ env.GIT_TOKEN }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        git_ref: ${{ inputs.git_ref }}
         nx_project: ${{ inputs.nx_project }}
         project_type: ${{ inputs.project_type }}
         service: ${{ inputs.service }}

@@ -33,6 +33,14 @@ inputs:
   git_token:
     description: 'GitHub token to use for pushing changes'
     required: true
+  gitops_repo:
+    description: 'GitOps repository URL'
+    required: false
+    default: 'SeamlessOps/products.git'
+  git_ref:
+    description: 'The GitOps branch to use'
+    required: false
+    default: 'main'
   error_log:
     description: 'File to store build error logs on docker build'
     required: false
@@ -204,3 +212,6 @@ runs:
         image_tag: ${{ inputs.image_tag }}
         environment: ${{ inputs.environment }}
         git_token: ${{ inputs.git_token }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        git_ref: ${{ inputs.git_ref }}
+
