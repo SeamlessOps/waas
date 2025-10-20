@@ -1,0 +1,35 @@
+name: 'Authenticate with Vault and GCloud'
+description: 'Reusable Terraform Authentication action'
+inputs:
+  vault_addr:
+    description: "Vault Address"
+    required: true
+  vault_role:
+    description: "Vault Role"
+    required: true
+  vault_secret_path:
+    description: "Vault Secret Path"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Retrieve Secrets
+      id: secretdata
+      uses: hashicorp/vault-action@v3
+      with: 
+        method: jwt
+        url: ${{ inputs.vault_addr }}
+        role: ${{ inputs.vault_role }}
+        secrets: |
+          ${{ inputs.vault_secret_path }}   GKE_PROJECT;
+          ${{ inputs.vault_secret_path }}   WORKLOAD_SA_EMAIL;
+          ${{ inputs.vault_secret_path }}   WORKLOAD_IDENTITY_PROVIDER;
+          ${{ inputs.vault_secret_path }}   VAULT_TOKEN;
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        service_account: ${{ env.WORKLOAD_SA_EMAIL }}
+        workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+        project_id: ${{ env.GKE_PROJECT }}

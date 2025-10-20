@@ -1,0 +1,104 @@
+name: "Slack Notification"
+description: "Reusable Slack notification action for workflows"
+
+inputs:
+  service:
+    description: "Service name"
+    required: false
+  environment:
+    description: 'Environment to update (development, staging, production or IaC)'
+    required: false
+    default: 'IaC'
+  webhook_url:
+    description: "Slack webhook URL secret name"
+    required: true
+  workflow_type:
+    description: "Type of workflow (security-scan, checkov, terraform-apply)"
+    required: true
+  status:
+    description: "Status of the job (success, failure, etc.)"
+    required: false
+    default: ${{ job.status }}
+  needs_result:
+    description: "Result from the needed job"
+    required: true
+  mention:
+    description: "Slack mention"
+    required: false
+    default: "@channel"
+
+outputs:
+  notification_sent:
+    description: "Whether notification was sent"
+    value: ${{ steps.notify.outputs.notification_sent }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Determine Notification Content
+      id: notification-content
+      shell: bash
+      run: |
+        case "${{ inputs.workflow_type }}" in
+          "workload")
+            TITLE="Deployment"
+            ;;
+          "image-security-scan")
+            TITLE="Image Security Scan"
+            ;;
+          "static-code-analysis")
+            TITLE="Static Code Analysis"
+            ;;
+          "quality-gate")
+            TITLE="Quality Gate Report"
+            ;;
+          "security-scan")
+            TITLE="Terraform Security Scan"
+            ;;
+          "checkov")
+            TITLE="Checkov Scan"
+            ;;
+          "terraform-apply")
+            TITLE="Terraform Apply"
+            ;;
+          *)
+            TITLE="Workflow"      # Default to Workflow title
+            ;;
+        esac
+
+        case "${{ inputs.needs_result }}" in
+          "success")
+            STATUS="✅ $TITLE succeeded"
+            ;;
+          "failure")
+            STATUS="❌ $TITLE failed"
+            ;;
+          "cancelled")
+            STATUS="🚫 $TITLE cancelled"
+            ;;
+          *)
+            STATUS="⚠️ $TITLE skipped"
+            ;;
+        esac
+
+        echo "title=$TITLE" >> $GITHUB_OUTPUT
+        echo "status_message=$STATUS" >> $GITHUB_OUTPUT
+
+    - name: Notify Slack
+      id: notify
+      uses: 8398a7/action-slack@v3
+      with:
+        fields: commit,workflow                 # workflow,message,commit,author
+        mention: ${{ inputs.mention }}
+        status: ${{ inputs.status }}
+        text: |
+          ${{ steps.notification-content.outputs.title }} Notification
+
+          Service: ${{ inputs.service }}
+          Environment: ${{ inputs.environment }}
+          Status: >-
+              ${{ steps.notification-content.outputs.status_message }}
+
+          Triggered by: @${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ inputs.webhook_url }}

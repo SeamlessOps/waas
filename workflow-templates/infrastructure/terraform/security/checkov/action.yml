@@ -1,0 +1,149 @@
+name: "Checkov Scan"
+description: "Reusable action to run checkov scan"
+
+inputs:
+  # Checkov-specific values
+  checkov_output_format:
+    description: "Output format for checkov report"
+    required: false
+    default: "github_failed_only"
+  checkov_markdown_output_file:
+    description: "Markdown output file for checkov report"
+    required: false
+    default: "results_github_failed_only.md"      # Not to be modified as this is created by checkov
+  checkov_cve_skip:
+    description: "Comma-separated list of CVEs to skip"
+    required: false
+    default: ""
+  log_level:
+    description: "Log level for checkov"
+    required: false
+    default: "INFO"
+  checkov_skip_check:
+    description: "Comma-separated list of Check IDs to skip"
+    required: false
+    default: "CKV_GCP_84,CKV_GCP_125,CKV_GCP_38,CKV_GCP_38,CKV_GCP_2,CKV_GIT_4,CKV_GIT_5,CKV_GIT_6,CKV_SECRET_6"
+    # --------------------------------------------------------------------------------------------------------------
+    #     Add Checkov IDs to skip here and justifications
+    #
+    # CKV_GCP_84: google_iam_workload_identity_pool_provider -- needed at all directory scale
+    # CKV_GCP_125: KMS keys for artifact repository. Not necessary at this time
+    # CKV_GCP_38: "Ensure VM disks for critical VMs are encrypted with Customer Supplied Encryption Keys (CSEK)"
+    # CKV_GCP_2: "Ensure Google compute firewall ingress does not allow unrestricted ssh access"
+    # 
+    # Secrets:
+    # CKV_GIT_4,CKV_GIT_5,CKV_GIT_6,CKV_SECRET_6: Complains but not an issue
+    # --------------------------------------------------------------------------------------------------------------
+  # Required values
+  working_directory:
+    description: "Working Directory"
+    required: true
+  github_token:
+    description: "GitHub token for PR comments"
+    required: true
+    default: ${{ github.token }}
+  json_plan_file:
+    description: "JSON formatted plan name"
+    required: false
+    default: "tfplan-json-${{ github.run_id }}.json"
+  module_targets:
+    description: "Optional: comma-separated list of modules to target (module.a,module.b)"
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Download Terraform Plan Artifact
+      if:  ${{ !inputs.module_targets }}
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.json_plan_file }}
+        path: ${{ inputs.working_directory }}
+
+    - name: Run Checkov action
+      id: checkov
+      uses: bridgecrewio/checkov-action@v12
+      with:
+        # Use directory scan when targets are used, JSON plan when not
+        ${{ !inputs.module_targets && 'file' || 'directory' }}: ${{ !inputs.module_targets && inputs.json_plan_file || inputs.working_directory }}
+        # Use the correct framework based on input type
+        framework: ${{ !inputs.module_targets && 'terraform_plan' || 'terraform' }}
+        soft_fail: false
+        skip_check: ${{ inputs.checkov_skip_check }} 
+        skip_cve_package: ${{ inputs.checkov_cve_skip }}
+        output_format: ${{ inputs.checkov_output_format }}
+        output_file_path:  ${{ inputs.working_directory }}
+        log_level: ${{ inputs.log_level }}
+        # Use the correct repo_root_for_plan_enrichment based on input type
+        repo_root_for_plan_enrichment: ${{ !inputs.module_targets && inputs.working_directory || '' }}
+
+    - name: Get Module Name
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      with:
+        working_directory: ${{ inputs.working_directory }}
+        
+    - name: Generate Checkov Report Markdown
+      id: checkov-report
+      if: failure()
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "## 🔍 Checkov Results" >> $GITHUB_STEP_SUMMARY
+        echo "### Module: ${{ env.MODULE_NAME }}" >> $GITHUB_STEP_SUMMARY
+
+        # Check if the results file exists and has content
+        if [ -s "${{ inputs.checkov_markdown_output_file }}" ]; then
+          cat "${{ inputs.checkov_markdown_output_file }}" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "✅ No security issues found!" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Comment Checkov Results
+      if: failure()
+      uses: actions/github-script@v7
+      env:
+        CHECKOV_OUTPUT: ${{ inputs.working_directory }}/${{ inputs.checkov_markdown_output_file }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const moduleName = process.env.MODULE_NAME;
+          const checkovOutput = process.env.CHECKOV_OUTPUT || '';
+          const maxLength = 60000;
+          
+          console.log("Module Name:", moduleName);
+          console.log("Checkov output length:", checkovOutput.length);
+
+          if (!checkovOutput) {
+            console.error("No Checkov output found");
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ Checkov Error\n\nNo Checkov output was generated for module: ${moduleName}`
+            });
+            return;
+          }
+
+          try {
+            const truncatedOutput = checkovOutput.length > maxLength 
+              ? checkovOutput.substring(0, maxLength) + "\n\n... (output truncated due to length)" 
+              : checkovOutput;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔍 Checkov Results\n\n### Module: ${moduleName}\n\n\`\`\`hcl\n${truncatedOutput}\n\`\`\`\n\n**❌ Security issues detected!**`
+            });
+          } catch (error) {
+            console.error("Error processing Checkov output:", error);
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ Checkov Error\n\nFailed to process Checkov results: ${error.message}`
+            });
+          }

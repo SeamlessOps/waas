@@ -1,0 +1,4 @@
+# CODEOWNERS for ondgo-products
+# Assigns ownership for code review in the ondgo-products repository.
+
+* @onDgoHQ/core-infrastructure

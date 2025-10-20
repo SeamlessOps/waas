@@ -1,0 +1,376 @@
+name: 'Load Services Matrix'
+description: 'Reusable action to load services from a JSON file for environment-aware GitOps deployments'
+
+inputs:
+  project_type:
+    description: 'Project type (dotnet, nx, node, python, etc)'
+    required: false
+  services_file:
+    description: 'JSON file containing service definitions'
+    required: false
+  services_dir:
+    description: 'Directory containing service files'
+    required: false
+  load_default:
+    description: 'Decide to load from default service_dir or custom one'
+    required: false
+    type: boolean
+  gitops_repo:
+    description: 'GitOps repository URL'
+    required: false
+    default: 'SeamlessOps/products.git'
+  git_ref:
+    description: 'The GitOps branch to use'
+    required: false
+    default: 'main'
+  monorepo:
+    description: 'Monorepo identifier'
+    required: false
+    type: boolean
+    default: true
+  service:
+    description: 'Service name. Required if monorepo is disabled'
+    required: false
+    default: ${{ github.event.repository.name }}
+  vault_addr:
+    description: 'Vault address. Required if load_default is true'
+    required: false
+  vault_role:
+    description: 'Vault role. Required if load_default is true'
+    required: false
+  vault_secret_path:
+    description: 'Vault secret path. Required if load_default is true'
+    required: false
+
+outputs:
+  regular-service:
+    description: 'Regular service name'
+    value: ${{ steps.process-repo-type.outputs.service }}
+  all-services:
+    description: 'All services as JSON matrix'
+    value: ${{ steps.load-services.outputs.all-services }}
+  staging-services:
+    description: 'Services filtered for staging deployment'
+    value: ${{ steps.load-services.outputs.staging-services }}
+  production-services:
+    description: 'Services filtered for production deployment'
+    value: ${{ steps.load-services.outputs.production-services }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Process Repository Type
+      id: process-repo-type
+      shell: bash
+      env:
+        MONOREPO: ${{ inputs.monorepo }}
+      run: |
+        if [[ "$MONOREPO" == "true" ]]; then
+          echo "monorepo=true" >> $GITHUB_OUTPUT
+        else
+          echo "monorepo=false" >> $GITHUB_OUTPUT
+          echo "service=${{ inputs.service }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Ensure Vault Credentials are Available
+      if: inputs.load_default == 'true' && inputs.monorepo == 'true'
+      shell: bash
+      env:
+        VAULT_ADDR: ${{ inputs.vault_addr }}
+        VAULT_ROLE: ${{ inputs.vault_role }}
+        VAULT_SECRET_PATH: ${{ inputs.vault_secret_path }}
+      run: |
+        MISSING_VARS=()
+        [ -z "$VAULT_ADDR" ] && MISSING_VARS+=("VAULT_ADDR")
+        [ -z "$VAULT_ROLE" ] && MISSING_VARS+=("VAULT_ROLE")
+        [ -z "$VAULT_SECRET_PATH" ] && MISSING_VARS+=("VAULT_SECRET_PATH")
+
+        if [ ${#MISSING_VARS[@]} -ne 0 ]; then
+          echo "[INFO] - ❌ Missing Vault credential(s): ${MISSING_VARS[*]}"
+          echo "[INFO] - ⚠️ Vault credentials are required if load_default is true"
+
+          # Create step summary
+          echo "## ❌ Vault Credentials Missing" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          for var in "${MISSING_VARS[@]}"; do
+            echo "- $var" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📝 Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "### Available Options:" >> $GITHUB_STEP_SUMMARY
+          echo "#### 1. Default GitOps Repository" >> $GITHUB_STEP_SUMMARY
+          echo "To use the default GitOps repository:" >> $GITHUB_STEP_SUMMARY
+          echo "- Provide vault credentials as inputs" >> $GITHUB_STEP_SUMMARY
+          echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
+          echo '```yaml' >> $GITHUB_STEP_SUMMARY
+          echo "uses: SeamlessOps/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
+          echo "with:" >> $GITHUB_STEP_SUMMARY
+          echo "  vault_addr: '<VAULT_ADDR>'" >> $GITHUB_STEP_SUMMARY
+          echo "  vault_role: '<VAULT_ROLE>'" >> $GITHUB_STEP_SUMMARY
+          echo "  vault_secret_path: '<VAULT_SECRET_PATH>'" >> $GITHUB_STEP_SUMMARY
+          echo "  services_file: '<service-file-name.json>'" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "_Note: \`load_default\` is true by default so you don't need to set it._" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 2. Client (service) Repository" >> $GITHUB_STEP_SUMMARY
+          echo "To use a custom service configuration in the service repository:" >> $GITHUB_STEP_SUMMARY
+          echo "- Set \`load_default\` to false and provide your own \`services_dir\` and \`services_file\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
+          echo '```yaml' >> $GITHUB_STEP_SUMMARY
+          echo "uses: SeamlessOps/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
+          echo "with:" >> $GITHUB_STEP_SUMMARY
+          echo "  load_default: false" >> $GITHUB_STEP_SUMMARY
+          echo "  services_dir: '<path-to-services-dir>'" >> $GITHUB_STEP_SUMMARY
+          echo "  services_file: '<service-file-name.json>'" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit 1
+        else
+          # Validate Vault URL format
+          if [[ ! "$VAULT_ADDR" =~ ^https?:// ]]; then
+              echo "❌ VAULT_ADDR must be a valid URL starting with http:// or https://"
+              echo "❌ VAULT_ADDR must be a valid URL starting with http:// or https://" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+          fi
+
+          # Validate Vault role format
+          if [[ ! "$VAULT_ROLE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              echo "❌ VAULT_ROLE must only contain letters, numbers, underscores, or dashes"
+              echo "❌ VAULT_ROLE must only contain letters, numbers, underscores, or dashes" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+          fi
+
+          # Validate Vault secret path format
+          if [[ ! "$VAULT_SECRET_PATH" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "❌ VAULT_SECRET_PATH must only contain letters, numbers, underscores, dots, slashes, or dashes"
+              echo "❌ VAULT_SECRET_PATH must only contain letters, numbers, underscores, dots, slashes, or dashes" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+          fi
+          echo "[INFO] - All required Vault credentials are present ✅"
+        fi
+
+    - name: Authenticate with Vault and Retrieve Secrets
+      id: secretdata
+      if: inputs.load_default == 'true' && inputs.monorepo == 'true'
+      uses: SeamlessOps/waas/workflow-templates/shared/auth/vault@main
+      with:
+        vault_addr: ${{ inputs.vault_addr }}
+        vault_role: ${{ inputs.vault_role }}
+        vault_secret_path: ${{ inputs.vault_secret_path }}
+
+    - name: Checkout GitOps Repository
+      uses: actions/checkout@v5
+      if: inputs.load_default == 'true' && inputs.monorepo == 'true'
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ env.GIT_TOKEN }}
+        ref: ${{ inputs.git_ref }}
+        sparse-checkout: ${{ inputs.services_dir }}
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Checkout Repository (the caller's repository)
+      if: inputs.load_default == 'false'
+      uses: actions/checkout@v5
+
+    - name: Skip Default GitOps Loading
+      if: inputs.load_default == 'false'
+      shell: bash
+      env:
+        SERVICES_DIR: "${{ inputs.services_dir }}"
+        SERVICES_FILE: "${{ inputs.services_file }}"
+      run: |
+        echo "[INFO] - Skipping Vault and GitOps repo load (using caller-provided paths)."
+        echo "[INFO] - 📁 Directory: $SERVICES_DIR"
+        echo "[INFO] - 📝 File: $SERVICES_FILE"
+
+    - name: Load and Filter Services
+      id: load-services
+      if: inputs.monorepo == 'true'
+      shell: bash
+      env:
+        SERVICES_FILE: "${{ inputs.services_dir }}/${{ inputs.services_file }}"
+      run: |
+        echo "[INFO] - 📁 Directory: ${{ inputs.services_dir }}"
+        echo "[INFO] - 📝 File: ${{ inputs.services_file }}"
+
+        if [ ! -f "$SERVICES_FILE" ]; then
+          echo "❌ Services configuration file not found: $SERVICES_FILE"
+          exit 1
+        fi
+
+        echo "[INFO] - 📥 Reading services configuration from $SERVICES_FILE"
+
+        # Basic JSON syntax validation
+        echo "[INFO] - 🔍 Validating JSON syntax..."
+        if ! jq empty "$SERVICES_FILE" 2>/dev/null; then
+          echo "[INFO] - ❌ Invalid JSON syntax in services file: $SERVICES_FILE"
+          echo "[INFO] - 💡 Please validate your JSON using: jq empty $SERVICES_FILE"
+          
+          # Export to Step summary
+          echo "## 🔍 Validating JSON syntax..." >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ❌ Invalid JSON syntax in services file: \`$SERVICES_FILE\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "Please validate your JSON using:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "jq empty $SERVICES_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+        echo "[INFO] - ✅ JSON syntax is valid"
+
+        echo "🔍 Validating services structure..."
+        if ! jq -e '.services' "$SERVICES_FILE" > /dev/null; then
+          echo "❌ Services file missing required 'services' key: $SERVICES_FILE"
+          echo "📋 Expected structure:"
+          echo '{
+            "services": [
+              {
+                "name": "service-name",
+                "environments": ["staging", "production"]
+              }
+            ]
+          }'
+
+          # Export to Step summary - using individual echo statements
+          echo "## 🔍 Validating services structure..." >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ❌ Services file _\`$SERVICES_FILE\`_ missing required \`'services'\` key" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📋 Expected structure:" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo '{' >> $GITHUB_STEP_SUMMARY
+          echo '  "services": [' >> $GITHUB_STEP_SUMMARY
+          echo '    {' >> $GITHUB_STEP_SUMMARY
+          echo '      "name": "service-name",' >> $GITHUB_STEP_SUMMARY
+          echo '      "environments": ["staging", "production"]' >> $GITHUB_STEP_SUMMARY
+          echo '    }' >> $GITHUB_STEP_SUMMARY
+          echo '  ]' >> $GITHUB_STEP_SUMMARY
+          echo '}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+        echo "[INFO] - ✅ Required 'services' key found"
+
+        # Validate services is an array
+        if ! jq -e '.services | type == "array"' "$SERVICES_FILE" > /dev/null; then
+          echo "[INFO] - ❌ 'services' must be an array in: $SERVICES_FILE"
+
+          # Export to Step summary
+          echo "## 🔍 Validating 'services' structure..." >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ❌ 'services' must be an array in: \`$SERVICES_FILE\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "Please validate your JSON using:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "jq -e '.services | type == \"array\"' \"$SERVICES_FILE\"" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+        echo "[INFO] - ✅ 'services' is a valid array"
+
+        # Validate each service has required fields
+        echo "[INFO] - 🔍 Validating individual service structure..."
+        INVALID_SERVICES=$(jq -r '
+          .services | to_entries[] | 
+          select(.value.name == null or .value.name == "") | 
+          "Service at index \(.key) missing name"
+        ' "$SERVICES_FILE")
+        
+        if [ -n "$INVALID_SERVICES" ]; then
+          echo "[INFO] - ❌ Some services are missing required 'name' field:"
+          echo "[INFO] - 📝 $INVALID_SERVICES"
+
+          # Export to Step summary
+          echo "## 🔍 Validating individual service structure..." >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ❌ Some services are missing required \`'name'\` field:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "📝 Invalid services:" >> $GITHUB_STEP_SUMMARY
+          echo "$INVALID_SERVICES" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+        echo "✅ All services have required fields"
+
+        # Validate environments format if present
+        echo "🔍 Validating environments format..."
+        INVALID_ENVIRONMENTS=$(jq -r '
+          .services[] | 
+          select(.environments != null and (.environments | type != "array")) | 
+          "Service \(.name) has invalid environments format (must be array)"
+        ' "$SERVICES_FILE")
+        
+        if [ -n "$INVALID_ENVIRONMENTS" ]; then
+          echo "[INFO] - ❌ Invalid environments format:"
+          echo "[INFO] - 📝 $INVALID_ENVIRONMENTS"
+
+          # Export to Step summary
+          echo "## 🔍 Validating environments format..." >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ❌ Invalid \`environments\` format:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "📝 Invalid services:" >> $GITHUB_STEP_SUMMARY
+          echo "$INVALID_ENVIRONMENTS" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+        echo "✅ All environments have valid format"
+
+        # Get default environments from metadata
+        DEFAULT_ENVS=$(jq -c '.metadata.default_environments // ["staging", "production"]' "$SERVICES_FILE")
+        echo "Default environments: $DEFAULT_ENVS"
+
+        # Load all services
+        ALL_SERVICES=$(jq -c '.services' "$SERVICES_FILE")
+        
+        # Validate that services array is not empty
+        SERVICE_COUNT=$(echo "$ALL_SERVICES" | jq length)
+        if [ "$SERVICE_COUNT" -eq 0 ]; then
+          echo "[INFO] - ❌ No services found in configuration file: $SERVICES_FILE"
+          echo "[INFO] - 📝 At least one service must be defined"
+
+          # Export to Step summary
+          echo "## ❌ No Services Found" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** No services found in configuration file: $SERVICES_FILE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "At least one service must be defined in the services array." >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+
+        # Define jq function for filtering
+        filter_services() {
+          local env="$1"
+          jq -c --argjson default_envs "$DEFAULT_ENVS" --arg env "$env" '
+            def filter_services($env):
+              [.services[]
+               | .environments as $service_envs
+               | ($service_envs // $default_envs) as $effective_envs
+               | select($effective_envs | index($env))
+              ];
+            filter_services($env)
+          ' "$SERVICES_FILE"
+        }
+
+        # Run for both environments
+        STAGING_SERVICES=$(filter_services "staging")
+        PRODUCTION_SERVICES=$(filter_services "production")
+
+        # Output results
+        echo "all-services=$ALL_SERVICES" >> $GITHUB_OUTPUT
+        echo "staging-services=$STAGING_SERVICES" >> $GITHUB_OUTPUT
+        echo "production-services=$PRODUCTION_SERVICES" >> $GITHUB_OUTPUT
+
+        # Calculate counts for summary
+        STAGING_COUNT=$(echo "$STAGING_SERVICES" | jq length)
+        PRODUCTION_COUNT=$(echo "$PRODUCTION_SERVICES" | jq length)
+
+        echo "[INFO] - ✅ Loaded services summary:"
+        echo "[INFO] -   Total services: $SERVICE_COUNT"
+        echo "[INFO] -   Staging services: $STAGING_COUNT"
+        echo "[INFO] -   Production services: $PRODUCTION_COUNT"
+
+        # Add to step summary for quick overview
+        # echo "## 📊 Services Loaded Successfully" >> $GITHUB_STEP_SUMMARY
+        # echo "- **Total services:** $SERVICE_COUNT" >> $GITHUB_STEP_SUMMARY
+        # echo "- **Staging services:** $STAGING_COUNT" >> $GITHUB_STEP_SUMMARY
+        # echo "- **Production services:** $PRODUCTION_COUNT" >> $GITHUB_STEP_SUMMARY

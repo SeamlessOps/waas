@@ -1,0 +1,43 @@
+name: "Terraform Setup"
+description: "Reusable action to setup Terraform"
+inputs:
+  vault_addr:
+    description: "Vault Address"
+    required: true
+  vault_role:
+    description: "Vault Role"
+    required: true
+  vault_secret_path:
+    description: "Vault Secret Path"
+    required: true
+  terraform_version:
+    description: "Version of Terraform to use"
+    default: 1.6.0
+    required: false
+  working_directory:
+    description: "Working Directory"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repo
+      uses: actions/checkout@v5
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform_version }}
+
+    - name: Authenticate with Vault and GCloud
+      id: auth
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/auth@main
+      with:
+        vault_addr: ${{ inputs.vault_addr }}
+        vault_role: ${{ inputs.vault_role }}
+        vault_secret_path: ${{ inputs.vault_secret_path }}
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform init

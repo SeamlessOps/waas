@@ -1,0 +1,126 @@
+name: 'WaaS Environment Router'
+description: 'Routes deployments to appropriate environments based on branch and repository type'
+
+inputs:
+  staging_env:
+    description: 'Staging environment name'
+    required: false
+    default: 'staging'
+  production_env:
+    description: 'Production environment name'
+    required: false
+    default: 'production'
+  staging_domain:
+    description: 'Staging domain identifier'
+    required: false
+    default: 'ondgo-dev'
+  production_domain:
+    description: 'Production domain identifier'
+    required: false
+    default: 'ondgo-ng'
+  monorepo:
+    description: 'Monorepo identifier'
+    required: false
+    type: boolean
+    default: true
+  service:
+    description: 'Service name. Required if monorepo is disabled'
+    required: false
+    default: ${{ github.event.repository.name }}
+  staging_services:
+    description: 'Staging services matrix'
+    required: true
+  production_services:
+    description: 'Production services matrix'
+    required: true  
+
+outputs:
+  config:
+    description: 'Build configuration'
+    value: ${{ steps.route.outputs.config }}
+  domain:
+    description: 'Domain suffix'
+    value: ${{ steps.route.outputs.domain }}
+  environment:
+    description: 'Target environment'
+    value: ${{ steps.route.outputs.environment }}
+  matrix:
+    description: 'Services matrix for deployment'
+    value: ${{ steps.route.outputs.matrix }}
+  service:
+    description: 'Single service name (for polyrepo)'
+    value: ${{ steps.route.outputs.service }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Route Environment
+      id: route
+      shell: bash
+      env:
+        PRODUCTION_CONFIG: Production
+        STAGING_CONFIG: Release
+      run: |
+        # Determine environment based on branch
+        case "${GITHUB_REF##*/}" in
+          "dev")
+            ENVIRONMENT_CONFIG="$STAGING_CONFIG"
+            ENVIRONMENT_DOMAIN="${{ inputs.staging_domain }}"
+            ENVIRONMENT_NAME="${{ inputs.staging_env }}"
+            SERVICES_JSON='${{ inputs.staging_services }}'
+            ;;
+          "main")
+            ENVIRONMENT_CONFIG="$PRODUCTION_CONFIG"
+            ENVIRONMENT_DOMAIN="${{ inputs.production_domain }}"
+            ENVIRONMENT_NAME="${{ inputs.production_env }}"
+            SERVICES_JSON='${{ inputs.production_services }}'
+            ;;
+          *)
+            echo "❌ Unsupported branch: ${GITHUB_REF##*/}"
+            exit 1
+            ;;
+        esac
+
+        echo "config=$ENVIRONMENT_CONFIG" >> $GITHUB_OUTPUT
+        echo "domain=$ENVIRONMENT_DOMAIN" >> $GITHUB_OUTPUT
+        echo "environment=$ENVIRONMENT_NAME" >> $GITHUB_OUTPUT
+
+        # Handle monorepo vs polyrepo - maintain existing structure
+        if [[ "${{ inputs.monorepo }}" == "true" ]]; then
+          # Monorepo - convert to proper JSON matrix
+          MONOREPO_JSON=$(echo "$SERVICES_JSON" | jq -c .)
+
+          echo "matrix=$MONOREPO_JSON" >> $GITHUB_OUTPUT
+          echo "service=" >> $GITHUB_OUTPUT  # Empty for monorepo
+        else
+          # Polyrepo - create a single-item array to maintain consistent structure
+          SINGLE_SERVICE_JSON=$(jq -n --arg service "${{ inputs.service }}" '[{"name": $service}]')
+          
+          echo "matrix=$SINGLE_SERVICE_JSON" >> $GITHUB_OUTPUT
+          echo "service=${{ inputs.service }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Post Routing Debug
+      id: post-routing-debug
+      shell: bash
+      env:
+        CONFIG: ${{ steps.route.outputs.config }}
+        DOMAIN: ${{ steps.route.outputs.domain }}
+        ENVIRONMENT: ${{ steps.route.outputs.environment }}
+        MATRIX: ${{ steps.route.outputs.matrix }}
+        SERVICE: ${{steps.route.outputs.service }}
+      run: |
+        echo "[INFO] - Routing Configurations:"
+        echo "[INFO] - Config: $CONFIG"
+        echo "[INFO] - Domain: $DOMAIN"
+        echo "[INFO] - Environment: $ENVIRONMENT"
+        
+        if [[ ! "${{ inputs.monorepo }}" == "true" ]]; then
+          echo "[INFO] - 🎯 Regular Repo enabled!"
+          echo "[INFO] - Service: $SERVICE"
+        else
+          echo "[INFO] - 🏗️ Monorepo enabled!"
+          echo "[INFO] - Matrix:"
+          echo "$MATRIX" | jq
+        fi
+        

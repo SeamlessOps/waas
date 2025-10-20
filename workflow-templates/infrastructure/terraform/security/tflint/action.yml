@@ -1,0 +1,71 @@
+name: "Terraform TF Lint"
+description: "Reusable action to run terraform linter"
+
+inputs:
+  working_directory:
+    description: "Working Directory"
+    required: true
+  github_token:
+    description: "GitHub token for PR comments"
+    required: true
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Setup TFLint
+      uses: terraform-linters/setup-tflint@v5
+      with:
+        tflint_wrapper: true
+
+    - name: Run TFLint
+      shell: bash
+      id: tflint
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        tflint --init
+        tflint --format compact
+      continue-on-error: true
+
+    - name: Get Module Name
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      with:
+        working_directory: ${{ inputs.working_directory }}
+
+    - name: Comment TFLint Results
+      if: ${{ steps.tflint.outputs.exitcode != 0 }}
+      uses: actions/github-script@v7
+      env:
+        TFLINT_OUTPUT: ${{ steps.tflint.outputs.stderr || steps.tflint.outputs.stdout }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const moduleName = process.env.MODULE_NAME;
+          console.log("Module Name:", moduleName);
+
+          const tflintOutput = process.env.TFLINT_OUTPUT || '';
+          const maxLength = 60000;
+          
+          try {
+            const truncatedOutput = tflintOutput.length > maxLength 
+              ? tflintOutput.substring(0, maxLength) + "\n\n... (output truncated due to length)" 
+              : tflintOutput;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔍 TFLint Validation Results\n\n ### Module: ${moduleName}\n\n \`\`\`hcl\n${truncatedOutput}\n\`\`\`\n\n**❌ Linting issues detected!**`
+            });
+          } catch (error) {
+            console.error("Error processing TFLint output:", error);
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ TFLint Error\n\nFailed to process TFLint results: ${error.message}`
+            });
+          }

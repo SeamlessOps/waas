@@ -1,0 +1,158 @@
+name: Aggregate Deploy
+description: Aggregates development, staging and production deploy results and sends Slack notifications.
+
+inputs:
+  environment:
+    description: 'Environment to update (development, staging, production)'
+    required: true
+  development_result:
+    description: Result of development deploy
+    required: false
+  development_no_changes:
+    description: No-changes flag for development
+    required: false
+  staging_result:
+    description: Result of staging deploy
+    required: true
+  staging_no_changes:
+    description: No-changes flag for staging
+    required: true
+  production_result:
+    description: Result of production deploy
+    required: true
+  production_no_changes:
+    description: No-changes flag for production
+    required: true
+
+outputs:
+  environment:
+    description: 'Environment where deployment happened'
+    value: ${{ steps.determine-environment.outputs.environment }}
+  needs-result:
+    description: 'Job dependency to construct Slack notification'
+    value: ${{ steps.determine-environment.outputs.needs_result }}
+  notify:
+    description: 'Whether or not to notify'
+    value: ${{ steps.determine-status.outputs.notify }}
+  overall-status:
+    description: 'Overall deployment status'
+    value: ${{ steps.determine-status.outputs.overall_status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Aggregate Deployment Status
+      id: aggregate-deploy-status
+      shell: bash
+      env:
+        DEVELOPMENT_NO_CHANGES: ${{ inputs.development_no_changes }}
+        DEVELOPMENT_RESULT: ${{ inputs.development_result }}
+        STAGING_RESULT: ${{ inputs.staging_result }}
+        PRODUCTION_RESULT: ${{ inputs.production_result }}
+        STAGING_NO_CHANGES: ${{ inputs.staging_no_changes }}
+        PRODUCTION_NO_CHANGES: ${{ inputs.production_no_changes }}
+      run: |
+        # Defaults
+        HAD_CHANGES=false
+        HAD_FAILURES=false
+
+        echo "[INFO] - Development result: $DEVELOPMENT_RESULT / no-changes: $DEVELOPMENT_NO_CHANGES"
+        echo "[INFO] - Staging result: $STAGING_RESULT / no-changes: $STAGING_NO_CHANGES"
+        echo "[INFO] - Production result: $PRODUCTION_RESULT / no-changes: $PRODUCTION_NO_CHANGES"
+
+        # Only consider jobs that actually ran and had changes
+        if [[ "$DEVELOPMENT_RESULT" == "success" || "$DEVELOPMENT_RESULT" == "failure" ]]; then
+          if [[ "$DEVELOPMENT_NO_CHANGES" != "true" ]]; then
+            HAD_CHANGES="true"
+            echo "[INFO] - Development had changes"
+          fi
+        fi
+
+        if [[ "$STAGING_RESULT" == "success" || "$STAGING_RESULT" == "failure" ]]; then
+          if [[ "$STAGING_NO_CHANGES" != "true" ]]; then
+            HAD_CHANGES="true"
+            echo "[INFO] - Staging had changes"
+          fi
+        fi
+
+        if [[ "$PRODUCTION_RESULT" == "success" || "$PRODUCTION_RESULT" == "failure" ]]; then
+          if [[ "$PRODUCTION_NO_CHANGES" != "true" ]]; then
+            HAD_CHANGES="true"
+            echo "[INFO] - Production had changes"
+          fi
+        fi
+
+        # Detect any failures (ignore skipped jobs)
+        if [[ "$DEVELOPMENT_RESULT" == "failure" || "$STAGING_RESULT" == "failure" || "$PRODUCTION_RESULT" == "failure" ]]; then
+          HAD_FAILURES="true"
+          echo "[INFO] - Failures detected"
+        fi
+
+        # Detect any job was cancelled
+        if [[ "$DEVELOPMENT_RESULT" == "cancelled" || "$STAGING_RESULT" == "cancelled" || "$PRODUCTION_RESULT" == "cancelled" ]]; then
+          CANCELLED="true"
+          echo "[INFO] - Run cancelled"
+        fi
+
+        echo "had_changes=$HAD_CHANGES" >> $GITHUB_OUTPUT
+        echo "had_failures=$HAD_FAILURES" >> $GITHUB_OUTPUT
+        echo "cancelled=$CANCELLED" >> $GITHUB_OUTPUT
+        echo "[INFO] - Aggregate Summary: changes=$HAD_CHANGES | failures=$HAD_FAILURES | cancelled=$CANCELLED"
+
+    - name: Determine status message
+      id: determine-status
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        HAD_CHANGES: ${{ steps.aggregate-deploy-status.outputs.had_changes }}
+        HAD_FAILURES: ${{ steps.aggregate-deploy-status.outputs.had_failures }}
+        CANCELLED: ${{ steps.aggregate-deploy-status.outputs.cancelled }}
+      run: |
+        if [[ "$HAD_FAILURES" == "true" ]]; then
+          echo "[INFO] - Overall Status: ❌ Failure"
+          echo "overall_status=failure" >> $GITHUB_OUTPUT
+          echo "notify=true" >> $GITHUB_OUTPUT
+        elif [[ "$HAD_CHANGES" == "true" ]]; then
+          echo "[INFO] - Overall Status: ✅ Success"
+          echo "[INFO] - Changes Detected..."
+          echo "overall_status=success" >> $GITHUB_OUTPUT
+          echo "notify=true" >> $GITHUB_OUTPUT
+        elif [[ "$HAD_CHANGES" != "true" ]]; then
+          echo "[INFO] - Overall Status: ✅ Success with No Changes"
+          echo "overall_status=success" >> $GITHUB_OUTPUT
+          echo "notify=false" >> $GITHUB_OUTPUT
+        elif [[ "$CANCELLED" == "true" ]]; then
+          echo "[INFO] - Overall Status: ⚠️ Cancelled"
+          echo "overall_status=cancelled" >> $GITHUB_OUTPUT
+          echo "notify=false" >> $GITHUB_OUTPUT
+        else
+          echo "[INFO] - Overall Status: Unkown"
+          echo "overall_status=unknown" >> $GITHUB_OUTPUT
+          echo "notify=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Determine Environment
+      id: determine-environment
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        DEVELOPMENT_ENV: development
+        STAGING_ENV: staging
+        PRODUCTION_ENV: production
+        DEVELOPMENT_RESULT: ${{ inputs.development_result }}
+        STAGING_RESULT: ${{ inputs.staging_result }}
+        PRODUCTION_RESULT: ${{ inputs.production_result }}
+      run: |
+        if [[ "$ENVIRONMENT" == "$DEVELOPMENT_ENV" ]]; then
+          echo "environment=$DEVELOPMENT_ENV" >> $GITHUB_OUTPUT
+          echo "needs_result=$DEVELOPMENT_RESULT" >> $GITHUB_OUTPUT
+        elif [[ "$ENVIRONMENT" == "$STAGING_ENV" ]]; then
+          echo "environment=$STAGING_ENV" >> $GITHUB_OUTPUT
+          echo "needs_result=$STAGING_RESULT" >> $GITHUB_OUTPUT
+        elif [[ "$ENVIRONMENT" == "$PRODUCTION_ENV" ]]; then
+          echo "environment=$PRODUCTION_ENV" >> $GITHUB_OUTPUT
+          echo "needs_result=$PRODUCTION_RESULT" >> $GITHUB_OUTPUT
+        else
+          echo "environment=unknown" >> $GITHUB_OUTPUT
+          echo "needs_result=" >> $GITHUB_OUTPUT
+        fi

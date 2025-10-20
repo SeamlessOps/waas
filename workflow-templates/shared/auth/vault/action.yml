@@ -1,0 +1,29 @@
+name: 'Authenticate with Vault'
+description: 'Reusable Authentication action'
+inputs:
+  vault_addr:
+    description: 'Vault address'
+    required: true
+  vault_role:
+    description: 'Vault role'
+    required: true
+  vault_secret_path:
+    description: 'Vault secret path'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Retrieve Secrets 
+      id: secretdata
+      uses: hashicorp/vault-action@v3.4.0
+      with:
+        method: jwt
+        url: ${{ inputs.vault_addr }}
+        role: ${{ inputs.vault_role }}
+        secrets: |
+          ${{ inputs.vault_secret_path }} ARTIFACT_REGISTRY;
+          ${{ inputs.vault_secret_path }} GIT_TOKEN;
+          ${{ inputs.vault_secret_path }} GKE_PROJECT;
+          ${{ inputs.vault_secret_path }} WORKLOAD_SA_EMAIL;
+          ${{ inputs.vault_secret_path }} WORKLOAD_IDENTITY_PROVIDER;

@@ -1,0 +1,202 @@
+name: GitOps Workflow as a Service (Unified WaaS)
+
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: 'Dry run mode'
+        required: false
+        type: boolean
+        default: false
+      project_type:
+        description: 'Project type (dotnet, nx, node, python, etc)'
+        required: true
+        type: string
+      services_file:
+        description: 'JSON file containing service definitions.'
+        required: false
+        type: string
+        default: '${{ github.event.repository.name }}.json'
+      services_dir:
+        description: 'Directory containing service files'
+        required: false
+        type: string
+        default: '.github/workflows/services'
+      load_default:
+        description: 'Decide to load from default service_dir or custom one'
+        required: false
+        type: boolean
+        default: true
+      dockerfile:
+        description: 'Dockerfile path for image building'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      staging_env:
+        description: 'Staging environment name'
+        required: false
+        type: string
+        default: 'staging'
+      production_env:
+        description: 'Production environment name'
+        required: false
+        type: string
+        default: 'production'
+      staging_domain:
+        description: 'Staging domain identifier'
+        required: false
+        type: string
+        default: 'ondgo-dev'
+      production_domain:
+        description: 'Production domain identifier'
+        required: false
+        type: string
+        default: 'ondgo-ng'
+      monorepo:
+        description: 'Monorepo identifier'
+        required: false
+        type: boolean
+        default: true
+      service:
+        description: 'Service name. Required if monorepo is disabled'
+        required: false
+        type: string
+        default: ${{ github.event.repository.name }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ----------------------------------------
+  # Step 1: PR Validation and Security Scan
+  # ----------------------------------------
+  validate-pr:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR Branch Rules
+        id: validate-pr
+        uses: SeamlessOps/waas/workflow-templates/shared/validate-pull-request@main
+
+  # -----------------------------
+  # Step 2: Load Services Matrix
+  # -----------------------------
+  load-services:
+    if: >
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      contains(github.event.head_commit.message, 'Merge pull request #')
+    runs-on: ubuntu-latest
+    outputs:
+      staging-services: ${{ steps.load-services-matrix.outputs.staging-services }}
+      production-services: ${{ steps.load-services-matrix.outputs.production-services }}
+      regular-service: ${{ steps.load-services-matrix.outputs.regular-service }}
+    steps:      
+      - name: Load services matrix
+        id: load-services-matrix
+        uses: SeamlessOps/waas/workflow-templates/workload/utils/load-services-matrix@main
+        with:
+          monorepo: ${{ inputs.monorepo }}
+          services_file: ${{ inputs.services_file }}
+          services_dir: ${{ inputs.services_dir }}
+          load_default: ${{ inputs.load_default }}
+          project_type: ${{ inputs.project_type }}
+          vault_addr: ${{ secrets.VAULT_ADDR }}
+          vault_role: ${{ secrets.VAULT_ROLE }}
+          vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
+
+  # --------------------------
+  # Step 3: Dynamic Routing
+  # --------------------------
+  #       R O U T E R
+  # --------------------------
+  waas-router:
+    needs: [load-services]
+    if: >
+      contains(github.event.head_commit.message, 'Merge pull request #') &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      config: ${{ steps.waas-router.outputs.config }}
+      domain: ${{ steps.waas-router.outputs.domain }}
+      environment: ${{ steps.waas-router.outputs.environment }}
+      matrix: ${{ steps.waas-router.outputs.matrix }}
+      service: ${{ steps.waas-router.outputs.service }}
+    steps:
+      - name: WaaS Router
+        id: waas-router
+        uses: SeamlessOps/waas/workflow-templates/workload/waas/router@main
+        with:
+          monorepo: ${{ inputs.monorepo }}
+          staging_domain: ${{ inputs.staging_domain }}
+          production_domain: ${{ inputs.production_domain }}
+          staging_env: ${{ inputs.staging_env }}
+          production_env: ${{ inputs.production_env }}
+          service: ${{ needs.load-services.outputs.regular-service || inputs.service }}
+          staging_services: ${{ needs.load-services.outputs.staging-services }}
+          production_services: ${{ needs.load-services.outputs.production-services }}
+
+  # --------------------------
+  # Step 4: Dynamic Deployment
+  # --------------------------
+  waas-deployer:
+    name: deploy-${{ needs.waas-router.outputs.environment }} (${{ matrix.service.name }})
+    needs: [waas-router]
+    environment: ${{ needs.waas-router.outputs.environment }}
+    runs-on: ubuntu-latest
+    if: inputs.dry-run == false
+    env:
+      PROJECT_TYPE: ${{ inputs.project_type }}
+      CONFIG: ${{ needs.waas-router.outputs.config }}
+      DIRECTORY: ${{ matrix.service.directory }}
+      DOMAIN: ${{ needs.waas-router.outputs.domain }}
+      ENVIRONMENT: ${{ needs.waas-router.outputs.environment }}
+      SERVICE: ${{ matrix.service.name }}
+      NX_PROJECT: ${{ matrix.service.nx_project || matrix.service.name }}
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.waas-router.outputs.matrix) }}
+      fail-fast: false
+    outputs:
+      duration: ${{ steps.waas-deployer.outputs.duration }}
+      no-changes: ${{ steps.waas-deployer.outputs.no-changes }}
+      environment: ${{ env.ENVIRONMENT }}
+      service: ${{ env.SERVICE }}
+    steps:
+      - name: Deploy ${{ env.SERVICE }} to ${{ env.ENVIRONMENT }}
+        id: waas-deployer
+        uses: SeamlessOps/waas/workflow-templates/workload/waas/deployer@main
+        with:
+          build_configuration: ${{ env.CONFIG }}
+          environment: ${{ env.ENVIRONMENT }}
+          directory: ${{ env.DIRECTORY}}
+          dockerfile: ${{ inputs.dockerfile }}
+          nx_project: ${{ env.NX_PROJECT }}
+          project_type: ${{ env.PROJECT_TYPE }}
+          service: ${{ env.SERVICE }}-${{ env.DOMAIN }}
+          vault_addr: ${{ secrets.VAULT_ADDR }}
+          vault_role: ${{ secrets.VAULT_ROLE }}
+          vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
+
+  # ----------------------------
+  # Step 4: Slack Notification
+  # ----------------------------
+  slack-notify-deployment:
+    needs: [waas-deployer]
+    name: notify-slack
+    runs-on: ubuntu-latest
+    if: >
+      always() && inputs.dry-run == false && 
+      github.event_name != 'pull_request' && 
+      needs.waas-deployer.outputs.no-changes != 'true' 
+    steps:
+      - name: Notify Slack
+        id: slack-notify
+        uses: SeamlessOps/waas/workflow-templates/shared/slack-notify@main
+        with:
+          workflow_type: workload
+          service: ${{ github.event.repository.name }}
+          environment: ${{ needs.waas-deployer.outputs.environment }}
+          status: ${{ needs.waas-deployer.result }}
+          needs_result: ${{ needs.waas-deployer.result }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY }}

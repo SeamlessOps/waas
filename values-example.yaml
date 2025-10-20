@@ -1,0 +1,258 @@
+# Default values for all services
+global:
+  enabled: true
+  workload: deployment            # Accepts 'deployment', 'rollout' or  'statefulset'
+  component: frontend             # For labelling of deployments
+  version: "1.0.0"
+  port: 443                        # Container targetPort
+  replicas: 2
+  revisionHistoryLimit: 3           # Max number of revisions to keep
+  allocateResources: true           # Resources configuration
+  imagePullPolicy: IfNotPresent     
+  autoscaling:
+    enabled: false
+    maxReplicas: 3                  # Required
+    cpuUtilization: 70
+    memoryUtilization: 70
+  pdb:
+    maxUnavailable: 1
+
+  # Default Healthcheck configuration
+  healthcheck:
+    enabled: true
+    path: "/"
+    probeType: HTTP                 # Accepts 'tcp' or 'http'
+    scheme: HTTPS                   # or HTTP if probeType is http
+
+  # Prometheus metrics configuration for AnalysisRun
+  prometheus:
+    host: "ondgo-core-kube-prometheus-prometheus.ondgo-monitoring"
+    port: 9090
+
+# Global Secrets and ConfigMaps envFrom
+# Can also be defined in each service
+envFrom:
+  secrets: []
+    # - database-creds
+    # - my-secret
+  configMaps: []
+    # - my-configmap-1
+    # - my-configmap-2
+
+# Default Rollout configuration
+rollout:
+  createPreviewService: false             # Disabled by default
+  analysis:
+    successfulRunHistoryLimit: 3
+    unsuccessfulRunHistoryLimit: 3
+  minReadySeconds: 30
+  rollbackWindow:
+    revisions: 3
+  strategy:
+    blueGreen:
+      enabled: false
+    canary:
+      enabled: false
+      steps: []
+
+# Environment-specific values
+environment: staging              # or production, development, etc.
+namespace: ondgo-rollouts
+domainSuffix: ondgo.dev
+
+# Default ingress configuration
+# Creates ingress with a list of hosts or by default using the 'service_name.domainSuffix'
+ingress:
+  enabled: true
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+resources:
+  requests:
+    cpu: "1m"
+    memory: "2Mi"
+  limits:
+    cpu: "20m"
+    memory: "50Mi"
+
+tls:
+  enabled: false
+  secretName: ""
+
+# Default health probes
+probes:
+  startupProbe:
+    failureThreshold: 30
+    initialDelaySeconds: 20
+    periodSeconds: 10
+
+  livenessProbe:
+    failureThreshold: 1
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  readinessProbe:
+    failureThreshold: 1
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Enable any of these services to test different scenarios
+services:
+# --------------------------------------------BASIC DEPLOYMENT EXAMPLES--------------------------------------------
+  # Regular deployment example
+  deployment-workload-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: deployment
+    autoscale: true
+
+  # Multi-host deployment example
+  multi-host-deployment-workload-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: deployment
+    autoscale: false
+    hosts:
+      - host4.ondgo.ng
+      - host5.ondgo.dev
+
+  # No ingress deployment example
+  no-ingress-deployment-workload-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: deployment
+    autoscale: true
+    enableIngress: false
+    allocateResources: false
+
+  # Deployment with secrets example
+  deployment-workload-with-secrets-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    secrets:
+      - database-creds
+      - my-secret
+
+  # Rollout with configmaps example
+  rollout-workload-with-configmaps-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: rollout
+    allocateResources: false
+    configMaps:
+      - my-configmap-1
+      - my-configmap-2
+  
+# --------------------------------------------BASIC ROLLOUT EXAMPLES--------------------------------------------
+  # Basic blueGreen rollout example
+  basic-blue-green-rollout-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: rollout
+    rollout:
+      strategy:
+        blueGreen:
+          enabled: true
+
+  # Basic canary rollout example
+  basic-canary-rollout-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: rollout
+    rollout:
+      strategy:
+        canary:
+          enabled: true
+
+# --------------------------------------------ADVANCED ROLLOUT EXAMPLES--------------------------------------------
+  # BlueGreen rollout example with 'active' and 'preview' hosts
+  multi-host-blue-green-rollout-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: rollout
+    rollout:
+      strategy:
+        blueGreen:
+          enabled: true
+    hosts:
+      active: green.ondgo.ng
+      preview: blue.ondgo.ng
+
+  # Canary rollout example with analysis
+  canary-rollout-with-analysis-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: rollout
+    rollout:
+      strategy:
+        canary:
+          enabled: true
+          analysis:
+            enabled: true
+            templates:
+              - name: global-rollout-analysis
+              - name: preview-rollout-analysis   
+  
+  # Canary rollout example with steps and inline analysis 
+  canary-rollout-with-steps-and-analysis-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    workload: rollout
+    rollout:
+      strategy:
+        canary:
+          enabled: true
+          steps:
+            - setWeight: 20
+            - pause: {}
+            - setWeight: 40
+            - pause: {duration: 60}
+            - setWeight: 60
+            - analysis:
+                templates:
+                  - templateName: global-rollout-analysis
+                    clusterScope: true
+                args:
+                  - name: service
+                    value: canary-rollout-example
+                  - name: ingress
+                    value: canary-rollout-example
+                  - name: namespace
+                    value: ondgo-rollouts
+                  - name: prometheusURL
+                    value: http://ondgo-core-kube-prometheus-prometheus.ondgo-monitoring:9090
+            - pause: {}
+            - setWeight: 80
+            - pause: {duration: 10}
+            - setWeight: 100
+  
+  # BlueGreen rollout example with multiple hosts and analysis
+  blue-green-multi-host-rollout-with-analysis-example:
+    enabled: false
+    tag: build-46-sha-4086d06
+    hosts:
+      - host1.ondgo.ng
+      - host2.ondgo.dev
+      - host3.ondgo.ng
+    rollout:
+      strategy:
+        blueGreen:
+          enabled: true
+      prePromotionAnalysis:
+        enabled: true
+        templates:
+          - templateName: global-rollout-analysis
+            clusterScope: true
+          - templateName: preview-rollout-analysis
+        args:                             # Args like 'service', 'ingress', 'prometheusURL',  and 'namespace' are provided by default
+        - name: error-rate-threshold
+          value: 0.02
+      postPromotionAnalysis:
+        enabled: true
+        templates:
+          - templateName: global-rollout-analysis
+            clusterScope: true
+          - templateName: active-rollout-analysis
+  

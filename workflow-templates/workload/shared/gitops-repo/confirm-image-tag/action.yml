@@ -1,0 +1,121 @@
+name: 'Update GitOps Values'
+description: 'Updates GitOps repository with new image tags'
+
+inputs:
+  service:
+    description: 'Service name to update'
+    required: true
+  image_tag:
+    description: 'New image tag to deploy'
+    required: false
+    default: 'build-${GITHUB_RUN_NUMBER}-sha-${GITHUB_SHA::7}'
+  environment:
+    description: 'Environment to update'
+    required: true
+  git_token:
+    description: 'GitHub token for pushing changes'
+    required: true
+  gitops_repo:
+    description: 'GitOps repository URL'
+    required: false
+    default: 'SeamlessOps/products.git'
+  git_ref:
+    description: 'The GitOps branch to use'
+    required: false
+    default: 'main'
+
+outputs:
+  no-changes:
+    description: 'Toggle to skip build and publish if image is up-to-date'
+    value: ${{ steps.confirm-image-tag.outputs.no-changes }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set values path
+      id: values
+      shell: bash
+      run: |
+        echo "values_file=environment/${{ inputs.environment }}/values-${{ inputs.environment }}.yaml" >> $GITHUB_OUTPUT
+        echo "values_dir=environment/${{ inputs.environment }}" >> $GITHUB_OUTPUT
+
+    - name: Checkout GitOps Repository
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.git_token }}
+        ref: ${{ inputs.git_ref }}
+        sparse-checkout: ${{ steps.values.outputs.values_dir }}
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Validate values file exists
+      shell: bash
+      run: |
+        values_file="${{ steps.values.outputs.values_file }}"
+
+        if [ ! -f "$values_file" ]; then
+          echo "::error::Values file '$values_file' not found in repository"
+          echo "Please ensure the file exists in the GitOps repository."
+          exit 1
+        fi
+        echo "✅ Values file found: $values_file"
+
+    - name: Install yq
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/bin/yq
+
+    - name: Confirm if Image Tag Needs Update
+      id: confirm-image-tag
+      shell: bash
+      run: |
+        values_file="${{ steps.values.outputs.values_file }}"
+        current_tag=$(yq eval ".services.${{ inputs.service }}.tag" "$values_file")
+
+        # Debug tags
+        echo "[DEBUG] ℹ️ Current tag: $current_tag"
+        echo "[DEBUG] ℹ️ New tag: ${{ inputs.image_tag }}"
+
+        if [ "$current_tag" = "${{ inputs.image_tag }}" ]; then
+          echo "✅ Image tag already up-to-date: $current_tag"
+          echo "no-changes=true" >> $GITHUB_OUTPUT
+          echo "NO_CHANGES=true" >> $GITHUB_ENV
+          exit 0
+        else
+          echo "ℹ️ Current tag: $current_tag, updating to: ${{ inputs.image_tag }}"
+          echo "no-changes=false" >> $GITHUB_OUTPUT
+          echo "NO_CHANGES=false" >> $GITHUB_ENV
+        fi
+
+    - name: Add Success Message
+      if: success()
+      shell: bash
+      run: |
+        if [ "$NO_CHANGES" = "true" ]; then
+          echo "## ✅ GitOps Update Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Status" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ✅ No changes needed - image tag already set to \`${{ inputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The deployment is up-to-date!" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "[View Deployment Dashboard](https://argocd.ondgo.ng/applications/ondgo-argocd/ondgo-products-${{ inputs.environment }}?view=tree)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Add Failure Message
+      if: failure()
+      shell: bash
+      run: |
+        echo "## ❌ Image Confirmation Failed" >> $GITHUB_STEP_SUMMARY
+        echo "### Environment: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Please check the build logs for errors and try again." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "[View Failed Build](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY

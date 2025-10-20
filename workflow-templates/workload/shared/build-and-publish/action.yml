@@ -1,0 +1,206 @@
+name: 'Build and Publish Docker Image'
+description: 'Reusable action for building and publishing Docker images'
+inputs:
+  service:
+    description: 'Service name (used in deployment)'
+    required: true
+  directory:
+    description: 'Service directory to build. Used in --build-arg $SERVICE_DIR'
+    required: false
+  image_tag:
+    description: 'New image tag to build and publish'
+    required: false
+    default: 'build-${GITHUB_RUN_NUMBER}-sha-${GITHUB_SHA::7}'
+  nx_project:
+    description: 'Name of the Nx project to build. Used in --build-arg $NX_PROJECT'
+    required: false
+  project_type:
+    description: 'Project type'
+    required: false
+  build_configuration:
+    description: 'Build Configuration to use for .NET project. Used in --build-arg $BUILD_CONFIGURATION'
+    required: false
+    default: 'Release'
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: true
+  environment:
+    description: 'Environment to update (development, staging, production)'
+    required: true
+  artifact_registry:
+    description: 'Artifact Registry path'
+    required: true
+  git_token:
+    description: 'GitHub token to use for pushing changes'
+    required: true
+  error_log:
+    description: 'File to store build error logs on docker build'
+    required: false
+    default: 'docker-error.log'
+
+outputs:
+  status:
+    description: 'The status of the Deployment'
+    value: ${{ steps.update-gitops.outputs.status }}
+  image_tag:
+    description: 'The generated image tag'
+    value: ${{ steps.build-and-publish.outputs.image_tag }}
+  image_uri:
+    description: 'Full image URI'
+    value: ${{ inputs.artifact_registry }}/${{ inputs.service }}:${{ steps.build-and-publish.outputs.image_tag }}
+  no-changes:
+    description: "Toggle to skip deployment if already up-to-date"
+    value: ${{ steps.update-gitops.outputs.no-changes }}
+
+runs:
+  using: "composite"
+  steps:     
+    - name: Install yq
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/bin/yq
+
+    - name: Authenticate with Google Cloud
+      uses: SeamlessOps/waas/workflow-templates/shared/auth/gcloud@main
+   
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      id: setup-buildx
+      with:
+        install: true
+        driver-opts: |
+          image=moby/buildkit:buildx-stable-1
+      continue-on-error: true
+
+    - name: Build and Publish Docker image
+      id: build-and-publish
+      shell: bash
+      run: |
+
+        set -euo pipefail
+
+        # Construct the image name and tag
+        IMAGE="${{ inputs.artifact_registry }}/${{ inputs.service }}"
+        TAG="${{ inputs.image_tag }}"
+        ERROR_LOG="${{ inputs.error_log }}"
+        
+        # Check if NX_PROJECT, ASPNETCORE_ENVIRONMENT or BUILD_CONFIGURATION are provided and build accordingly
+        BUILD_ARGS=""
+        
+        # Add NX_PROJECT if provided
+        if [[ -n "${{ inputs.nx_project }}" && "${{ inputs.project_type }}" == "nx" ]]; then
+          BUILD_ARGS="$BUILD_ARGS --build-arg NX_PROJECT=${{ inputs.nx_project }}"
+        fi
+
+        # Add ASPNETCORE_ENVIRONMENT if provided
+        if [[ -n "${{ inputs.environment }}" ]]; then
+          if [[ "${{ inputs.project_type }}" == "dotnet" || "${{ inputs.project_type }}" == ".net" ]]; then
+            BUILD_ARGS="$BUILD_ARGS --build-arg ASPNETCORE_ENVIRONMENT=${{ inputs.environment }}"
+          fi
+          # Display Deployment Environment
+          echo "---------------------------------"
+          echo "::ASPNETCORE_ENVIRONMENT::${{ inputs.environment }}"
+          echo "---------------------------------"
+        fi
+
+        # Add BUILD_CONFIGURATION if provided
+        if [[ -n "${{ inputs.build_configuration }}" ]]; then
+          if [[ "${{ inputs.project_type }}" == "dotnet" || "${{ inputs.project_type }}" == ".net" ]]; then
+            BUILD_ARGS="$BUILD_ARGS --build-arg BUILD_CONFIGURATION=${{ inputs.build_configuration }}"
+          fi
+
+          # Display Build Configuration
+          echo "---------------------------------"
+          echo "::BUILD_CONFIGURATION::${{ inputs.build_configuration }}"
+          echo "---------------------------------"
+        fi
+
+        # Add SERVICE_DIR if provided
+        if [[ -n "${{ inputs.directory }}" ]]; then
+          if [[ "${{ inputs.project_type }}" == "dotnet" || "${{ inputs.project_type }}" == ".net" ]]; then
+            BUILD_ARGS="$BUILD_ARGS --build-arg SERVICE_DIR=${{ inputs.directory }}"
+          fi
+
+          # Display Build Configuration
+          echo "---------------------------------"
+          echo "::SERVICE_DIR::${{ inputs.directory }}"
+          echo "---------------------------------"
+        fi
+
+        # Display build information
+        echo "---------------------------------"
+        echo "[INFO] - Building: $IMAGE:$TAG"
+        echo "[INFO] -  Build Arguments: $BUILD_ARGS"
+        echo "[INFO] -  Dockerfile: ${{ inputs.dockerfile }}"
+        if [[ -n "${{ inputs.environment }}" ]]; then
+          echo "[INFO] -  Environment: ${{ inputs.environment }}"
+        fi
+        if [[ -n "${{ inputs.build_configuration }}" ]]; then
+          echo "[INFO] -  Build Configuration: ${{ inputs.build_configuration }}"
+        fi
+        echo "---------------------------------"
+
+        # Conditionally use Buildx if setup was successful, otherwise use regular Docker
+        set +e
+        if [[ "${{ steps.setup-buildx.outcome }}" == "success" ]]; then
+          echo "[INFO] - ✅ Buildx Detected"
+          echo "[INFO] - Buildx version:"
+          docker buildx version
+          echo "[INFO] - Buildx instances:"
+          docker buildx ls
+
+          echo "[INFO] - ✅ Using Docker Buildx for build..."
+          docker buildx build --push --progress=plain \
+            -t "$IMAGE:$TAG" \
+            -f "${{ inputs.dockerfile }}" \
+            $BUILD_ARGS . 2>&1 | tee "$ERROR_LOG"
+        else
+          echo "[INFO] - Buildx setup failed, using regular Docker build..."
+          docker build \
+            -t "$IMAGE:$TAG" \
+            -f "${{ inputs.dockerfile }}" \
+            $BUILD_ARGS . 2>&1 | tee "$ERROR_LOG"
+          docker push "$IMAGE:$TAG" 2>&1 | tee -a "$ERROR_LOG"
+        fi
+
+        BUILD_EXIT_CODE=${PIPESTATUS[0]}
+        set -e
+        echo "[INFO] - BUILD_EXIT_CODE=$BUILD_EXIT_CODE"
+
+        if [[ $BUILD_EXIT_CODE -ne 0 ]]; then
+          echo "[INFO] - ❌ Docker build failed with exit code $BUILD_EXIT_CODE"
+
+          # Export to step summary
+          echo "## ❌ ${{ inputs.service }} - Docker build failed" >> $GITHUB_STEP_SUMMARY
+          echo "### Exit Code: $BUILD_EXIT_CODE" >> $GITHUB_STEP_SUMMARY
+          echo "### 🛑 Error Log:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          if ! grep -iE "(error|failed|not found|undefined)" "$ERROR_LOG" | tail -n 50 >> $GITHUB_STEP_SUMMARY; then
+            echo "(No matching error keywords found, showing last 50 log lines)" >> $GITHUB_STEP_SUMMARY
+            tail -n 50 "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit $BUILD_EXIT_CODE
+        else
+          echo "[INFO] - ✅ Docker build and push succeeded: $IMAGE:$TAG"
+        fi
+
+        # Make image tag available in GITHUB_ENV
+        echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+
+        # Set outputs
+        echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+        echo "image_uri=$IMAGE:$TAG" >> $GITHUB_OUTPUT
+
+    - name: Update GitOps Values
+      id: update-gitops
+      if: success()
+      uses: SeamlessOps/waas/workflow-templates/workload/shared/gitops-repo/update-image-tag@main
+      with:
+        service: ${{ inputs.service }}
+        image_tag: ${{ inputs.image_tag }}
+        environment: ${{ inputs.environment }}
+        git_token: ${{ inputs.git_token }}

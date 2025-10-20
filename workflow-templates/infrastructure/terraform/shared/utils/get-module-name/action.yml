@@ -1,0 +1,23 @@
+name: "Get Module Name"
+description: "Reusable action to get module name from working directory"
+
+inputs:
+  working_directory:
+    description: "Working Directory"
+    required: true
+
+outputs:
+  module_name:
+    description: "Module Name"
+    value: ${{ steps.get-module-name.outputs.module_name }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get Module Name
+      id: get-module-name
+      shell: bash
+      run: |
+        module_name=$(basename "${{ inputs.working_directory }}")
+        echo "module_name=$module_name" >> $GITHUB_OUTPUT
+        echo "MODULE_NAME=$module_name" >> $GITHUB_ENV

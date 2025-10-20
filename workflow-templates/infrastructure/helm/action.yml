@@ -1,0 +1,26 @@
+name: Helm Action
+description: 'Reusable action to run some helm processes'
+inputs:
+  working_directory:
+    description: 'Working Directory'
+    required: true
+
+# ----------------------
+# To be completed soon
+# ----------------------
+runs:
+  using: composite
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Run Helm
+      id: helm
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        helm install
+
+# ----------------------
+# To be completed soon
+# ----------------------

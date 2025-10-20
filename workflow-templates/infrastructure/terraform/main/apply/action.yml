@@ -1,0 +1,113 @@
+name: "Terraform Apply"
+description: "Reusable action to apply Terraform infrastructure"
+inputs:
+  module_targets:
+    description: "Optional: comma-separated list of modules to target (module.a,module.b)"
+    required: false
+  vault_addr:
+    description: "Vault Address"
+    required: true
+  vault_role:
+    description: "Vault Role"
+    required: true
+  vault_secret_path:
+    description: "Vault Secret Path"
+    required: true
+  working_directory:
+    description: "Working Directory"
+    required: true
+
+outputs:
+  no_changes:
+    description: "No Changes in Terraform Plan"
+    value: ${{ steps.apply.outputs.no_changes }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Setup Terraform
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/main/setup@main
+      with:
+        vault_addr: ${{ inputs.vault_addr }}
+        vault_role: ${{ inputs.vault_role }}
+        vault_secret_path: ${{ inputs.vault_secret_path }}
+        working_directory: ${{ inputs.working_directory }}
+
+    - name: Terraform Apply
+      id: apply
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        MODULE_TARGETS: ${{ inputs.module_targets }}
+        VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+        VAULT_ADDR: ${{ inputs.vault_addr }}
+      run: |
+        APPLY_OUT=$(mktemp)
+
+        # Build base apply command
+        APPLY_CMD="terraform apply -auto-approve"
+
+        if [ -n "$MODULE_TARGETS" ]; then
+          IFS=',' read -ra TARGET_ARRAY <<< "$MODULE_TARGETS"
+          for t in "${TARGET_ARRAY[@]}"; do
+            APPLY_CMD="$APPLY_CMD -target=module.$t"
+          done
+          echo "Applying with targets: $MODULE_TARGETS"
+        else
+          echo "Applying full workspace for ${{ inputs.working_directory }}"
+        fi
+
+        # Execute apply, pipe output into a file, capture exit code
+        echo "Running: $APPLY_CMD"
+        set +e
+        $APPLY_CMD | tee "$APPLY_OUT"
+        APPLY_EXIT_CODE=$?
+        set -e
+
+        # Detect changes by grepping apply output
+        if grep -q "No changes" "$APPLY_OUT"; then
+          echo "✅ No changes applied"
+          echo "no_changes=true" >> $GITHUB_OUTPUT
+        else
+          echo "📋 Resources were applied/changed"
+          echo "no_changes=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Get Module Name
+      id: get-module-name
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      with:
+        working_directory: ${{ inputs.working_directory }}
+
+    - name: Add Success Message
+      if: steps.apply.outputs.no_changes != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "## 🚀 Terraform Apply Complete" >> $GITHUB_STEP_SUMMARY
+        echo "### Status: ✅ Success" >> $GITHUB_STEP_SUMMARY
+        echo "Terraform applied successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "**Awesome Job @${{ github.actor }}!** 🎉" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Module:** ${{ env.MODULE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -n "${{ inputs.module_targets }}" ]; then
+          echo "**Targeted Modules:** ${{ inputs.module_targets }}" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Add No Changes Message
+      if: steps.apply.outputs.no_changes == 'true'
+      shell: bash
+      run: |
+        echo "## ✅ No Terraform Changes Detected" >> $GITHUB_STEP_SUMMARY
+        echo "**Working Directory:** ${{ inputs.working_directory }}" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ inputs.module_targets }}" ]; then
+          echo "**Targets:** ${{ inputs.module_targets }}" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**Module:** ${{ env.MODULE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "No infrastructure changes required. Terraform plan shows everything is up-to-date." >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,19 @@
+name: 'Authenticate with Google Cloud'
+description: 'Reusable Authentication action'
+runs:
+  using: "composite"
+  steps:
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        service_account: ${{ env.WORKLOAD_SA_EMAIL }}
+        workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+        project_id: ${{ env.GKE_PROJECT }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      
+    - name: Configure Docker auth
+      run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+      shell: bash

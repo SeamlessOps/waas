@@ -1,0 +1,145 @@
+name: 'Build Nx Projects'
+description: 'Nx reusable action for building Nx projects'
+inputs:
+  artifact_dir:
+    description: 'Name of the build artifact directory'
+    required: false
+    default: 'dist'
+  environment:
+    description: 'Environment to update (development, staging, production)'
+    required: true
+  node_version:
+    description: 'Node.js version'
+    required: true
+    default: '22.2.x'
+  nx_project:
+    description: 'Name of the Nx project to build (use "all" to build everything)'
+    required: true
+
+outputs:
+  build-status:
+    description: 'Whether the action was successful or not'
+    value: ${{ steps.verify-artifacts.outputs.build-status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      id: setup-node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      id: install-dependencies
+      shell: bash
+      run: npm install --legacy-peer-deps
+
+    - name: Build Nx project
+      id: build-nx-project
+      uses: mansagroup/nrwl-nx-action@v3
+      with:
+        targets: build
+        projects: ${{ inputs.nx_project }}
+        args: --configuration="${{ inputs.environment }}"
+
+    - name: Wait for File System Sync
+      shell: bash
+      run: |
+        echo "[INFO] - Waiting for file system to sync..."
+        sleep 5
+        sync
+
+    - name: Verify Build Artifacts
+      id: verify-artifacts
+      shell: bash
+      env:
+        NX_PROJECT: ${{ inputs.nx_project }}
+        ARTIFACT_DIR: ${{ inputs.artifact_dir }}
+      run: |
+        echo "=== Debugging Build Artifacts ==="
+        echo "Present Working Directory: $(pwd)"
+        echo "Directory Contents:"
+        ls -la
+
+        echo "=== Verifying Build Artifacts ==="
+        echo "Working directory: $(pwd)"
+        echo "Looking for artifact directory: $ARTIFACT_DIR"
+        
+        # Check if dist directory exists
+        if [ ! -d "$ARTIFACT_DIR" ]; then
+          echo "## ❌ Build Verification Failed" >> $GITHUB_STEP_SUMMARY
+          echo "**Error**: Artifact directory '$ARTIFACT_DIR' not found" >> $GITHUB_STEP_SUMMARY
+          echo "Directory contents:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -la >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "[INFO] - '$ARTIFACT_DIR' directory not found!"
+          exit 1
+        fi
+
+        echo "[INFO] - Artifact directory found"
+        echo "Artifact directory contents:"
+        ls -la "$ARTIFACT_DIR"
+
+        # Handle different Nx project scenarios
+        if [ "$NX_PROJECT" = "all" ]; then
+          echo "[INFO] - Building all projects, checking for any build output"
+          # Check if dist directory has any content
+          if [ -z "$(ls -A "$ARTIFACT_DIR")" ]; then
+            echo "## ❌ Build Verification Failed" >> $GITHUB_STEP_SUMMARY
+            echo "**Error**: Artifact directory '$ARTIFACT_DIR' is empty" >> $GITHUB_STEP_SUMMARY
+            echo "[INFO] - '$ARTIFACT_DIR' directory is empty!"
+            echo "build-status=failure" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "[SUCCESS] - Build artifacts verified for all projects"
+          echo "build-status=success" >> $GITHUB_OUTPUT
+        else
+          # Check for specific project
+          echo "[INFO] - Looking for specific project: $NX_PROJECT"
+          
+          # Nx can create different directory structures, check common patterns
+          PROJECT_PATHS=(
+            "$ARTIFACT_DIR/apps/$NX_PROJECT"
+          )
+          
+          FOUND_PATH=""
+          for path in "${PROJECT_PATHS[@]}"; do
+            if [ -d "$path" ]; then
+              FOUND_PATH="$path"
+              echo "[INFO] - Found project at: $path"
+              echo "Project contents:"
+              ls -la "$path"
+              break
+            fi
+          done
+
+          if [ -z "$FOUND_PATH" ]; then
+            echo "## ❌ Build Verification Failed" >> $GITHUB_STEP_SUMMARY
+            echo "**Error**: Project '$NX_PROJECT' not found in artifact directory" >> $GITHUB_STEP_SUMMARY
+            echo "Searched paths:" >> $GITHUB_STEP_SUMMARY
+            printf -- '- %s\n' "${PROJECT_PATHS[@]}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Actual dist contents:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            find "$ARTIFACT_DIR" -type f -name "*" | head -20 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "[INFO] - Project '$NX_PROJECT' not found in any expected location!"
+            exit 1
+          fi
+
+          # Verify the build output contains essential files
+          ESSENTIAL_FILES=("index.html" "main.js" "bundle.js" "package.json")
+          for file in "${ESSENTIAL_FILES[@]}"; do
+            if [ -f "$FOUND_PATH/$file" ] || [ -f "$FOUND_PATH/dist/$file" ] || [ -f "$FOUND_PATH/build/$file" ]; then
+              echo "[INFO] - Essential file pattern found: $file"
+              break
+            fi
+          done
+
+          echo "[SUCCESS] - Build artifacts verified for project: $NX_PROJECT"
+          echo "build-status=success" >> $GITHUB_OUTPUT
+          echo "artifact-path=$FOUND_PATH" >> $GITHUB_OUTPUT
+        fi

@@ -1,0 +1,189 @@
+name: '.NET Action: Build and Publish Docker Image'
+description: '.NET reusable action for building and publishing .NET docker images'
+inputs:
+  service:
+    description: 'Service name'
+    required: true
+  directory:
+    description: 'Service directory to build'
+    required: true
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  project_type:
+    description: 'Project type'
+    required: false
+    default: 'generic'
+  project_list:
+    description: 'List of projects to build'
+    required: false
+    default: '("generic" "dotnet" ".net" "nx" "node" "python" "java")'
+  build_configuration:
+    description: 'Build Configuration to use for .NET project'
+    required: false
+    default: 'Release'
+  dotnet_version:
+    description: '.NET version'
+    required: false
+  nx_project:
+    description: 'Name of the Nx project to build (use "all" to build everything)'
+    required: false
+  node_version:
+    description: 'Node.js version'
+    required: false
+  environment:
+    description: 'Environment to update (development, staging, production)'
+    required: true
+  vault_addr:
+    description: 'Vault address'
+    required: true
+  vault_role:
+    description: 'Vault role'
+    required: true
+  vault_secret_path:
+    description: 'Vault secret path'
+    required: true
+
+outputs:
+  duration:
+    description: 'Duration of the Deployment'
+    value: ${{ steps.calculate-duration.outputs.duration }}
+  no-changes:
+    description: 'Toggle to skip build and publish if image is up-to-date'
+    value: ${{ steps.confirm-image-tag.outputs.no-changes }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Authenticate with Vault and Retrieve Secrets 
+      id: secretdata
+      uses: SeamlessOps/waas/workflow-templates/shared/auth/vault@main
+      with:
+        vault_addr: ${{ inputs.vault_addr }}
+        vault_role: ${{ inputs.vault_role }}
+        vault_secret_path: ${{ inputs.vault_secret_path }}
+
+    - name: Confirm if Image Tag Needs Update
+      id: confirm-image-tag
+      uses: SeamlessOps/waas/workflow-templates/workload/shared/gitops-repo/confirm-image-tag@main
+      with:
+        service: ${{ inputs.service }}
+        environment: ${{ inputs.environment }}
+        git_token: ${{ env.GIT_TOKEN }}
+    
+    - name: Set start timestamp
+      id: start-time
+      if: steps.confirm-image-tag.outputs.no-changes != 'true'
+      shell: bash
+      run: |
+        echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+    - name: Validate project type
+      id: validate-project-type
+      if: steps.confirm-image-tag.outputs.no-changes != 'true'
+      shell: bash
+      env:
+        PROJECT_TYPE: ${{ inputs.project_type }}
+        SUPPORTED_TYPES: ${{ inputs.project_list }}
+      run: |
+        VALID_PROJECT_TYPE="false"
+
+        echo "[INFO] - Raw project type: $PROJECT_TYPE"
+        echo "[INFO] - Supported types: ${SUPPORTED_TYPES[*]}"
+
+        # Convert to lowercase
+        PROJECT_TYPE=$(echo "$PROJECT_TYPE" | tr '[:upper:]' '[:lower:]')
+        echo "[INFO] - Normalized project type: $PROJECT_TYPE"
+
+        # Convert SUPPORTED_TYPES string → bash array
+        eval "SUPPORTED_ARRAY=${SUPPORTED_TYPES}"
+
+        # Validate project type
+        if [[ ! " ${SUPPORTED_ARRAY[@]} " =~ " ${PROJECT_TYPE} " ]]; then
+          echo "[INFO] - ❌ Unsupported project type: $PROJECT_TYPE"
+          echo "[INFO] - ✅ Supported types: ${SUPPORTED_ARRAY[*]}"
+          echo "## ❌ Unsupported project type: $PROJECT_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Supported types: ${SUPPORTED_ARRAY[*]}" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        else
+          echo "[INFO] - ✅ Valid project type: $PROJECT_TYPE"
+          VALID_PROJECT_TYPE="true"
+        fi
+
+        echo "project-type=$PROJECT_TYPE" >> $GITHUB_OUTPUT
+        echo "valid-project-type=$VALID_PROJECT_TYPE" >> $GITHUB_OUTPUT
+    
+    - name: Checkout Repository
+      if: steps.confirm-image-tag.outputs.no-changes != 'true'
+      id: checkout-repository
+      uses: actions/checkout@v5
+
+    - name: Build .NET Project
+      id: build-dotnet
+      if: >
+        steps.validate-project-type.outputs.project-type == 'dotnet' || 
+        steps.validate-project-type.outputs.project-type == '.net'
+      uses: SeamlessOps/waas/workflow-templates/workload/templates/dotnet@main
+      with:
+        directory: ${{ inputs.directory }}
+
+    - name: Build Nx Project
+      id: build-nx
+      if: steps.validate-project-type.outputs.project-type == 'nx'
+      uses: SeamlessOps/waas/workflow-templates/workload/templates/nx@main
+      with:
+        nx_project: ${{ inputs.nx_project }}
+        environment: ${{ inputs.environment }}
+
+    - name: Build and Publish Docker Image
+      id: build-and-publish
+      if: >
+        steps.confirm-image-tag.outputs.no-changes!= 'true' && 
+        steps.validate-project-type.outputs.valid-project-type == 'true'
+      uses: SeamlessOps/waas/workflow-templates/workload/shared/build-and-publish@main
+      with:
+        artifact_registry: ${{ env.ARTIFACT_REGISTRY }}
+        build_configuration: ${{ inputs.build_configuration }}
+        directory: ${{ inputs.directory }}
+        dockerfile: ${{ inputs.dockerfile }}
+        environment: ${{ inputs.environment }}
+        git_token: ${{ env.GIT_TOKEN }}
+        nx_project: ${{ inputs.nx_project }}
+        project_type: ${{ inputs.project_type }}
+        service: ${{ inputs.service }}
+
+    - name: Calculate duration
+      id: calculate-duration
+      if: >
+        always() && 
+        steps.confirm-image-tag.outputs.no-changes!= 'true' && 
+        steps.validate-project-type.outputs.valid-project-type == 'true'
+      shell: bash
+      run: |
+        echo "Start time from outputs: ${{ steps.start-time.outputs.timestamp }}"
+        echo "Current time (EPOCHSECONDS): $EPOCHSECONDS"
+        echo "Current time (date +%s): $(date +%s)"
+        
+        current_time=$EPOCHSECONDS
+        start_time=${{ steps.start-time.outputs.timestamp }}
+        duration=$((current_time - start_time))
+        
+        echo "Calculated duration: $duration seconds"
+        echo "duration=$duration" >> $GITHUB_OUTPUT
+
+    - name: Collect Metrics for ${{ inputs.service }}
+      id: collect-metrics
+      if: >
+        always() &&
+        steps.confirm-image-tag.outputs.no-changes!= 'true' && 
+        steps.validate-project-type.outputs.valid-project-type == 'true'
+      uses: SeamlessOps/waas/workflow-templates/workload/utils/collect-metrics@main
+      with:
+        environment: ${{ inputs.environment }}
+        service: ${{ inputs.service }}
+        status: ${{ steps.build-and-publish.outputs.status }}
+        duration: ${{ steps.calculate-duration.outputs.duration }}
+        git_token: ${{ env.GIT_TOKEN }}
+        image_tag: ${{ steps.build-and-publish.outputs.image_tag }}
+      continue-on-error: true

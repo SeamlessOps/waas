@@ -1,0 +1,54 @@
+name: 'Build .NET Projects'
+description: '.NET reusable action for building .NET projects'
+inputs:
+  directory:
+    description: 'Service directory to build'
+    required: true
+  dotnet_version:
+    description: '.NET version'
+    default: '9.0.x'
+
+outputs:
+  build-status:
+    description: 'Whether the action was successful or not'
+    value: ${{ steps.verify-artifacts.outputs.build-status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup .NET
+      id: setup-dotnet
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+    
+    - name: Verify and Restore .NET Project
+      id: verify-dotnet-project
+      shell: bash
+      run: |
+        set -euo pipefail
+        
+        PROJECT_DIR="${{ inputs.directory }}"
+        EXPECTED_PROJECT_FILE="$PROJECT_DIR/$PROJECT_DIR.csproj"
+        
+        echo "[INFO] - 🔍 Verifying project structure..."
+        echo "[INFO] - Project directory: $PROJECT_DIR"
+        echo "[INFO] - Expected project file: $EXPECTED_PROJECT_FILE"
+        
+        # Check if project exists with expected naming pattern
+        if [ ! -f "$EXPECTED_PROJECT_FILE" ]; then
+          echo "[WARN] - ❌ Project file not found at expected location: $EXPECTED_PROJECT_FILE"
+          echo ""
+          echo "[INFO] - 📁 Available projects in repository:"
+          find . -name "*.csproj" -type f | grep -v "obj/" | grep -v "bin/" | sed 's|^\./||' | sort
+          echo "build-status=failure" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        echo "[INFO] - ✅ Project verified: $EXPECTED_PROJECT_FILE"
+        
+        # Restore dependencies
+        echo "[INFO] - 📦 Restoring dependencies..."
+        dotnet restore "$PROJECT_DIR" --verbosity quiet
+        echo "[INFO] - ✅ $PROJECT_DIR Dependencies restored successfully"
+        echo "build-status=success" >> $GITHUB_OUTPUT

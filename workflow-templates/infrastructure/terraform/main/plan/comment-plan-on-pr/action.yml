@@ -1,0 +1,118 @@
+name: "[Plan] - Comment on Pull Request"
+description: "Reusable action to comment on a pull request"
+
+inputs:
+  working_directory:
+    description: "Working Directory"
+    required: true
+  rendered_plan_file:
+    description: "Rendered human-readable plan filename" 
+    required: false
+    default: "tfplan-rendered-${{ github.run_id }}"
+  github_token:
+    description: "GitHub token for PR comments"
+    required: true
+    default: ${{ github.token }}
+  plan_status:
+    description: "Status of the plan job (success, failure, cancelled, skipped)"
+    required: true
+    default: "success"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+      with:
+        ref: ${{ github.event.pull_request.head.ref }}
+
+    - name: Download Rendered Plan Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.rendered_plan_file }}
+        path: ${{ inputs.working_directory }}
+
+    - name: Get Module Name
+      id: get-module-name
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      with:
+        working_directory: ${{ inputs.working_directory }}
+
+    - name: Comment Plan on PR
+      if: ${{ inputs.plan_status == 'success' }}
+      uses: actions/github-script@v7
+      env:
+        PLAN_FILE: ${{ inputs.rendered_plan_file }}
+        WORK_DIR: ${{ inputs.working_directory }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const moduleName = process.env.MODULE_NAME;
+          console.log("Module Name:", moduleName);
+
+          const fs = require("fs");
+          const path = require("path");
+
+          // Ensure we look inside the working directory
+          const planFile = path.join(process.env.GITHUB_WORKSPACE, process.env.WORK_DIR, process.env.PLAN_FILE);
+          console.log("Reading plan file from:", planFile);
+
+          if (!fs.existsSync(planFile)) {
+            console.error(`Plan file not found at ${planFile}`);
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ Terraform Plan Error\n\nPlan file not found at: ${planFile}`
+            });
+            return;
+          }
+
+          try {
+            const planOutput = fs.readFileSync(planFile, "utf8");
+            const maxLength = 60000;
+            const truncatedOutput = planOutput.length > maxLength 
+              ? planOutput.substring(0, maxLength) + "\n\n... (output truncated due to length)" 
+              : planOutput;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📖 Terraform Plan\n\n ### Module: ${moduleName} \n\n \`\`\`hcl\n${truncatedOutput}\n\`\`\``
+            });
+          } catch (error) {
+            console.error("Error reading plan file:", error);
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ Terraform Plan Error\n\nFailed to read plan file: ${error.message}`
+            });
+          }
+
+    - name: Comment Plan Status
+      if: ${{ inputs.plan_status != 'success' }}
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const status = "${{ inputs.plan_status }}";
+          let message = "";
+          
+          if (status === "failure") {
+            message = "❌ Terraform plan failed! Please check logs.";
+          } else if (status === "cancelled") {
+            message = "⏹️ Terraform plan was cancelled.";
+          } else if (status === "skipped") {
+            message = "⏭️ Terraform plan was skipped.";
+          } else {
+            message = `ℹ️ Terraform plan status: ${status}`;
+          }
+
+          await github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: message
+          });

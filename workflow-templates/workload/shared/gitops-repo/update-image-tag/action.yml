@@ -1,0 +1,206 @@
+name: 'Update GitOps Values'
+description: 'Updates GitOps repository with new image tags'
+
+inputs:
+  service:
+    description: 'Service name to update'
+    required: true
+  image_tag:
+    description: 'New image tag to deploy'
+    required: true
+  environment:
+    description: 'Environment to update'
+    required: true
+  git_token:
+    description: 'GitHub token for pushing changes'
+    required: true
+  gitops_repo:
+    description: 'GitOps repository URL'
+    required: false
+    default: 'SeamlessOps/products.git'
+  git_ref:
+    description: 'The GitOps branch to use'
+    required: false
+    default: 'main'
+  git_update_max_retries:
+    description: 'Maximum retries for updating GitOps repository'
+    required: false
+    default: '5'
+  git_user_name:
+    description: 'GitHub username for pushing changes'
+    required: false
+    default: "github-actions[bot]"
+  git_user_email:
+    description: 'GitHub user email for pushing changes'
+    required: false
+    default: "41898282+github-actions[bot]@users.noreply.github.com"
+
+outputs:
+  no-changes:
+    description: "Toggle to skip deployment if already up-to-date"
+    value: ${{ steps.finalize-status.outputs.no-changes }}
+  status:
+    description: 'The status of the Deployment'
+    value: ${{ steps.finalize-status.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set values path
+      id: values
+      shell: bash
+      run: |
+        echo "values_file=environment/${{ inputs.environment }}/values-${{ inputs.environment }}.yaml" >> $GITHUB_OUTPUT
+        echo "values_dir=environment/${{ inputs.environment }}" >> $GITHUB_OUTPUT
+
+    - name: Checkout GitOps Repository
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.git_token }}
+        ref: ${{ inputs.git_ref }}
+        sparse-checkout: ${{ steps.values.outputs.values_dir }}
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Validate values file exists
+      shell: bash
+      run: |
+        values_file="${{ steps.values.outputs.values_file }}"
+
+        if [ ! -f "$values_file" ]; then
+          echo "::error::Values file '$values_file' not found in repository"
+          echo "Please ensure the file exists in the GitOps repository."
+          exit 1
+        fi
+        echo "✅ Values file found: $values_file"
+
+    - name: Install yq
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/bin/yq
+
+    - name: Update Image Tag
+      shell: bash
+      run: |
+        values_file="${{ steps.values.outputs.values_file }}"
+
+        # Validate service exists
+        if ! yq eval ".services.${{ inputs.service }}" "$values_file" > /dev/null; then
+          echo "::error::Service ${{ inputs.service }} not found in values file"
+          exit 1
+        fi
+
+        # Update image tag
+        yq eval ".services.${{ inputs.service }}.tag = \"${{ inputs.image_tag }}\"" -i "$values_file"
+
+    - name: Commit and Push Changes
+      shell: bash
+      id: update-gitops
+      run: |
+        values_file="${{ steps.values.outputs.values_file }}"
+
+        git config user.name "${{ inputs.git_user_name }}"
+        git config user.email "${{ inputs.git_user_email }}"
+        git add "$values_file"
+
+        # Check if there are any changes to commit
+        if git diff --staged --quiet; then
+          echo "✅ No changes to commit - image tag is already set to '${{ inputs.image_tag }}'"
+
+          # Export NO_CHANGES to outputs and ENV
+          echo "NO_CHANGES=true" >> $GITHUB_ENV
+          echo "no-changes=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        git commit -m "${{ inputs.environment }}: Update ${{
+          inputs.service }} to ${{ inputs.image_tag }}"
+
+        # Push with enhanced retry logic and better error handling
+        max_retries=${{ inputs.git_update_max_retries }}
+        
+        for i in $(seq 1 $max_retries); do
+          if git pull --rebase origin ${{ inputs.git_ref }}; then
+            if git push origin ${{ inputs.git_ref }}; then
+              echo "✅ Changes pushed successfully on attempt $i"
+              break
+            else
+              echo "⚠️ Push failed (attempt $i/$max_retries), retrying in 5 seconds..."
+              sleep 5
+            fi
+          else
+            echo "::error::Failed to pull and rebase changes from origin/${{ inputs.git_ref }}"
+            echo "Please check for merge conflicts or repository permissions."
+            exit 1
+          fi
+          
+          if [ $i -eq $max_retries ]; then
+            echo "::error::Failed to push changes after $max_retries attempts"
+            echo "Please check repository permissions and try again."
+            exit 1
+          fi
+        done
+
+    - name: Set final status output
+      if: always()
+      id: finalize-status
+      shell: bash
+      run: |
+        if [[ "$NO_CHANGES" == "true" ]]; then
+          echo "no-changes=true" >> $GITHUB_OUTPUT
+        elif [[ "${{ job.status }}" == "success" ]]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "🚦 Status: ${{ job.status }}"
+        elif [[ "${{ job.status }}" == "cancelled" ]]; then
+          echo "status=cancelled" >> $GITHUB_OUTPUT
+          echo "🚦 Status: ${{ job.status }}"
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "🚦 Status: ${{ job.status }}"
+        fi
+
+    - name: Add Success Message
+      if: success()
+      shell: bash
+      run: |
+        if [ "$NO_CHANGES" = "true" ]; then
+          echo "## ✅ GitOps Update Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Status" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ✅ No changes needed - image tag already set to \`${{ inputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The deployment is up-to-date!" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "## 🚀 ${{ inputs.service }} deployed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Service** | ${{ inputs.service }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image Tag** | \`${{ inputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${GITHUB_SHA::7}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Number** | $GITHUB_RUN_NUMBER |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 👏 Great work @${{ github.actor }}!" >> $GITHUB_STEP_SUMMARY
+          echo "Your changes are now being deployed to **${{ inputs.environment }}** environment." >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "[View Deployment Dashboard](https://argocd.ondgo.ng/applications/ondgo-argocd/ondgo-products-${{ inputs.environment }}?view=tree)" >> $GITHUB_STEP_SUMMARY
+
+    - name: Add Failure Message
+      if: failure()
+      shell: bash
+      run: |
+        echo "## ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+        echo "### Environment: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Please check the build logs for errors and try again." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "[View Failed Build](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY

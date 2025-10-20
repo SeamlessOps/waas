@@ -1,0 +1,49 @@
+name: "Terraform TF Sec"
+description: "Reusable action to run tfsec"
+
+inputs:
+  working_directory:
+    description: "Working Directory"
+    required: true
+  github_token:
+    description: "GitHub token for PR comments"
+    required: true
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Setup TFSec
+      uses: aquasecurity/tfsec-action@v1.0.3
+      id: tfsec
+      with:
+        working_directory: ${{ inputs.working_directory }}
+        soft_fail: true
+        github_token: ${{ inputs.github_token }}
+        additional_args: --force-all-dirs --concise-output 
+        # https://aquasecurity.github.io/tfsec/v0.63.1/getting-started/usage/
+
+    - name: Get Module Name
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      with:
+        working_directory: ${{ inputs.working_directory }}
+
+    - name: Comment tfsec Results
+      if: ${{ steps.tfsec.outputs.tfsec-return-code != 0 }}
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const moduleName = process.env.MODULE_NAME;
+          console.log("Module Name:", moduleName);
+
+          // Since tfsec only provides exit code, we comment when there are errors
+          await github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## ❌ tfsec Security Scan Failed\n\n ### Module: ${moduleName}\n\n Security issues detected in Terraform code! Please check the workflow logs for details.`
+          });

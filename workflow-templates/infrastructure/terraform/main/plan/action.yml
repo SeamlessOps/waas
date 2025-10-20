@@ -1,0 +1,208 @@
+name: "Terraform Validate and Plan"
+description: "Reusable action to validate and plan Terraform"
+inputs:
+  module_targets:
+    description: "Optional: comma-separated list of modules to target (module.a,module.b)"
+    required: false
+  vault_addr:
+    description: "Vault Address"
+    required: true
+  vault_role:
+    description: "Vault Role"
+    required: true
+  vault_secret_path:
+    description: "Vault Secret Path"
+    required: true
+  working_directory:
+    description: "Working Directory"
+    required: true
+  github_token:
+    description: "GitHub token for PR comments"
+    required: true
+    default: ${{ github.token }}
+  terraform_output:
+    description: "Terraform binary plan filename"
+    required: false
+    default: "tfplan-binary-${{ github.run_id }}"
+  rendered_plan_file:
+    description: "Rendered human-readable plan filename" 
+    required: false
+    default: "tfplan-rendered-${{ github.run_id }}"
+  json_plan_file:
+    description: "JSON formatted plan name"
+    required: false
+    default: "tfplan-json-${{ github.run_id }}.json"
+  retention_days:
+    description: "How long to retain artifacts"
+    required: false
+    default: "3"
+  markdown_artifact_name:
+    description: "Markdown plan artifact name"
+    required: false
+    default: "tfplan-binary-${{ github.run_id }}.md"
+
+outputs:
+  no_changes:
+    description: "No Changes in Terraform Plan"
+    value: ${{ steps.plan.outputs.no_changes }}
+  plan_file:
+    description: "Terraform Plan File Path"
+    value: ${{ steps.plan.outputs.plan_file }}
+  rendered_plan_file:
+    description: "Rendered plan artifact name" 
+    value: ${{ steps.render-plan.outputs.rendered_plan_file }}
+  json_plan_file:
+    description: "JSON plan artifact name"
+    value: ${{ steps.render-plan.outputs.json_plan_file }}
+  markdown_plan_file:
+    description: "Markdown plan artifact name"
+    value: ${{ steps.tf-summarize.outputs.markdown_plan_file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v5
+
+    - name: Setup Terraform
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/main/setup@main
+      with:
+        vault_addr: ${{ inputs.vault_addr }}
+        vault_role: ${{ inputs.vault_role }}
+        vault_secret_path: ${{ inputs.vault_secret_path }}
+        working_directory: ${{ inputs.working_directory }}
+ 
+    - name: Terraform Validate and Plan
+      id: plan
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        PLAN_FILE: ${{ inputs.terraform_output}}
+        MODULE_TARGETS: ${{ inputs.module_targets }}
+        VAULT_TOKEN: ${{ env.VAULT_TOKEN }}
+        VAULT_ADDR: ${{ inputs.vault_addr }}
+      run: |
+        PLAN_OUT=$(mktemp)
+
+        # Build base plan command
+        PLAN_CMD="terraform plan -out=$PLAN_FILE -input=false"
+
+        if [ -n "$MODULE_TARGETS" ]; then
+          IFS=',' read -ra TARGET_ARRAY <<< "$MODULE_TARGETS"
+          for t in "${TARGET_ARRAY[@]}"; do
+            PLAN_CMD="$PLAN_CMD -target=module.$t"
+          done
+          echo "Planning with targets: $MODULE_TARGETS"
+        else
+          echo "Planning complete infrastructure for ${{ inputs.working_directory }}"
+        fi
+
+        # Execute plan, pipe output into a file, capture exit code
+        echo "Running: $PLAN_CMD"
+        set +e
+        $PLAN_CMD | tee "$PLAN_OUT"
+        PLAN_EXIT_CODE=$?
+        set -e
+
+        echo "plan_file=$PLAN_FILE" >> $GITHUB_OUTPUT
+
+        # Detect changes by grepping plan output
+        if grep -q "No changes" "$PLAN_OUT"; then
+          echo "✅ No changes detected"
+          echo "no_changes=true" >> $GITHUB_OUTPUT
+        else
+          echo "📋 Changes detected"
+          echo "no_changes=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload Binary Plan Artifact
+      id: upload-binary
+      uses: actions/upload-artifact@v4
+      if: steps.plan.outputs.no_changes != 'true'
+      with:
+        name: ${{ inputs.terraform_output }}
+        path: ${{ inputs.working_directory }}/${{ inputs.terraform_output}}
+        retention-days: ${{ inputs.retention_days }}
+        
+    - name: Render Plan Output
+      id: render-plan
+      if: steps.plan.outputs.no_changes != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        MODULE_TARGETS: ${{ inputs.module_targets }}
+      run: |
+        # Human-readable plan
+        terraform show -no-color ${{ inputs.terraform_output}} > ${{ inputs.rendered_plan_file }}
+        echo "rendered_plan_file=${{ inputs.rendered_plan_file }}" >> $GITHUB_OUTPUT
+        
+        # Only generate JSON if no targets were used (targets cause serialization issues)
+        if [ -n "$MODULE_TARGETS" ]; then
+          echo "Skipping JSON generation (not compatible with targeted plans)"
+          echo "json_plan_file=" >> $GITHUB_OUTPUT  # Set empty output
+        else
+          # JSON plan (only for full plans)
+          terraform show -json ${{ inputs.terraform_output}} > ${{ inputs.json_plan_file }}
+          echo "json_plan_file=${{ inputs.json_plan_file }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload JSON Plan Artifact
+      id: upload-json
+      if: steps.plan.outputs.no_changes != 'true' && !inputs.module_targets
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.json_plan_file }}
+        path: ${{ inputs.working_directory }}/${{ inputs.json_plan_file }}
+        retention-days: ${{ inputs.retention_days }}
+
+    - name: Upload Rendered Plan Artifact
+      id: upload-rendered
+      if: steps.plan.outputs.no_changes != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.rendered_plan_file }}
+        path: ${{ inputs.working_directory }}/${{ inputs.rendered_plan_file }}
+        retention-days: ${{ inputs.retention_days }}
+
+    # For Developer easy access on actions UI
+    - name: Setup tf-summarize
+      if: steps.plan.outputs.no_changes != 'true' && !inputs.module_targets
+      uses: kishaningithub/setup-tf-summarize@v1
+      
+    - name: Generate Terraform Plan Summary
+      id: tf-summarize
+      if: steps.plan.outputs.no_changes != 'true' && !inputs.module_targets
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        SUMMARY_FILE="${{ inputs.terraform_output }}"
+        MARKDOWN_SUMMARY_FILE="${{ inputs.markdown_artifact_name }}"
+        
+        # Use tee to both see output and save to file
+        tf-summarize -md "${SUMMARY_FILE}" | tee "${MARKDOWN_SUMMARY_FILE}"
+        
+        # Add to GitHub step summary
+        echo "## Terraform Plan" >> $GITHUB_STEP_SUMMARY
+        cat "${MARKDOWN_SUMMARY_FILE}" >> $GITHUB_STEP_SUMMARY
+        
+        # Output the file path
+        echo "markdown_plan_file=${MARKDOWN_SUMMARY_FILE}" >> $GITHUB_OUTPUT
+
+    - name: Get Module Name
+      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      with:
+        working_directory: ${{ inputs.working_directory }}
+
+    - name: Add No Changes Message
+      if: steps.plan.outputs.no_changes == 'true'
+      shell: bash
+      run: |
+        echo "## ✅ No Terraform Changes Detected" >> $GITHUB_STEP_SUMMARY
+        echo "**Working Directory:** ${{ inputs.working_directory }}" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ inputs.module_targets }}" ]; then
+          echo "**Targets:** ${{ inputs.module_targets }}" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**Module:** ${{ env.MODULE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "No infrastructure changes required. Terraform plan shows everything is up-to-date." >> $GITHUB_STEP_SUMMARY
