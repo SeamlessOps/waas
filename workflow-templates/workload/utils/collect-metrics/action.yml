@@ -235,6 +235,7 @@ runs:
 
     - name: Update WaaS Dashboard
       id: update-waas-dashboard
+      if: always()
       shell: bash
       env:
         COMMIT_AUTHOR: ${{ inputs.commit_author }}
