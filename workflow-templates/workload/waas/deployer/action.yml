@@ -197,5 +197,9 @@ runs:
         status: ${{ steps.build-and-publish.outputs.status }}
         duration: ${{ steps.calculate-duration.outputs.duration }}
         git_token: ${{ env.GIT_TOKEN }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        git_ref: ${{ inputs.git_ref }}
         image_tag: ${{ steps.build-and-publish.outputs.image_tag }}
+        waas_api_url: ${{ env.WAAS_API_URL }}
+        waas_api_key: ${{ env.WAAS_API_KEY }}
       continue-on-error: true

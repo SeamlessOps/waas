@@ -46,8 +46,11 @@ inputs:
     description: 'Commit message'
     required: false
     default: '${{ github.event.head_commit.message }}'
-  dashboard_url:
-    description: 'Dashboard URL'
+  waas_api_url:
+    description: 'WaaS API URL'
+    required: false
+  waas_api_key:
+    description: 'WaaS API Key'
     required: false
   git_token:
     description: 'GitHub token for pushing changes'
@@ -229,3 +232,55 @@ runs:
             exit 1
           fi
         done
+
+    - name: Update WaaS Dashboard
+      id: update-waas-dashboard
+      shell: bash
+      env:
+        COMMIT_AUTHOR: ${{ inputs.commit_author }}
+        COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        METRICS_FILE: ${{ inputs.metrics_dir }}/${{ inputs.metrics_file }}
+        METRICS_SCRIPT: ${{ inputs.metrics_dir }}/${{ inputs.metrics_script }}
+        SERVICE: ${{ inputs.service }}
+        SERVICE_TYPE: ${{ steps.service-type.outputs.service_type }}
+        STATUS: ${{ inputs.status }}
+        DURATION: ${{ inputs.duration }}
+        COMMIT_HASH: ${{ github.sha }}
+        ACTIONS_URL: ${{ github.server_url }}/${{ github.repository_owner }}/${{ github.event.repository.name }}/actions/runs/${{github.run_id }}
+        REPOSITORY: ${{ github.event.repository.name }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGE_TAG: ${{ inputs.image_tag }} 
+      run: |
+        SHORT_HASH=$(echo ${COMMIT_HASH::7})
+
+        echo "[INFO] - 🧩 Service: $SERVICE"
+        echo "[INFO] - 🧭 Type: $SERVICE_TYPE"
+        echo "[INFO] - 📋 Image Tag: $IMAGE_TAG"
+        echo "[INFO] - 🏛️ Repository: $REPOSITORY"
+        echo "[INFO] - 🚦 Status: $STATUS"
+        echo "[INFO] - 👤 Commit Author: $COMMIT_AUTHOR"
+        echo "[INFO] - ⏳ Commit Hash: $SHORT_HASH"
+        echo "[INFO] - 📝 Commit Message: $COMMIT_MESSAGE"
+        echo "[INFO] - 🤖 Action URL: $ACTIONS_URL"
+        echo "[INFO] - ⏱️ Duration: $DURATION"
+        echo "[INFO] - 🌎 Environment: $ENVIRONMENT"
+
+        echo "Sending metrics to WaaSdashboard..."
+
+        curl -X POST ${{ inputs.waas_api_url }}/api/deployments \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ inputs.waas_api_key }}" \
+            -d '{
+                "environment": "$ENVIRONMENT",
+                "service": "$SERVICE",
+                "service_type": "$SERVICE_TYPE",
+                "status": "$STATUS",
+                "duration_seconds": $DURATION,
+                "commit_hash": "$SHORT_HASH",
+                "commit_author": "$COMMIT_AUTHOR",
+                "commit_message": "$COMMIT_MESSAGE",
+                "actions_url": "$ACTIONS_URL",
+                "image_tag": "$IMAGE_TAG",
+                "pipeline_id": "${{ github.run_id }}"
+                "triggered_by": "$COMMIT_AUTHOR"
+            }'

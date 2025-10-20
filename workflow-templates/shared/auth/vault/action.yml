@@ -27,3 +27,5 @@ runs:
           ${{ inputs.vault_secret_path }} GKE_PROJECT;
           ${{ inputs.vault_secret_path }} WORKLOAD_SA_EMAIL;
           ${{ inputs.vault_secret_path }} WORKLOAD_IDENTITY_PROVIDER;
+          ${{ inputs.vault_secret_path }} WAAS_API_KEY;
+          ${{ inputs.vault_secret_path }} WAAS_API_URL;
