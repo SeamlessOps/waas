@@ -239,19 +239,22 @@ runs:
       env:
         COMMIT_AUTHOR: ${{ inputs.commit_author }}
         COMMIT_MESSAGE: ${{ inputs.commit_message }}
-        METRICS_FILE: ${{ inputs.metrics_dir }}/${{ inputs.metrics_file }}
-        METRICS_SCRIPT: ${{ inputs.metrics_dir }}/${{ inputs.metrics_script }}
         SERVICE: ${{ inputs.service }}
         SERVICE_TYPE: ${{ steps.service-type.outputs.service_type }}
         STATUS: ${{ inputs.status }}
         DURATION: ${{ inputs.duration }}
         COMMIT_HASH: ${{ github.sha }}
-        ACTIONS_URL: ${{ github.server_url }}/${{ github.repository_owner }}/${{ github.event.repository.name }}/actions/runs/${{github.run_id }}
+        PIPELINE_ID: ${{ github.run_id }}
+        ACTIONS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         REPOSITORY: ${{ github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
-        IMAGE_TAG: ${{ inputs.image_tag }} 
+        IMAGE_TAG: ${{ inputs.image_tag }}
+        WAAS_API_URL: ${{ inputs.waas_api_url }}
+        WAAS_API_KEY: ${{ inputs.waas_api_key }}
       run: |
-        SHORT_HASH=$(echo ${COMMIT_HASH::7})
+        set -e
+
+        SHORT_HASH=$(echo "${COMMIT_HASH::7}")
 
         echo "[INFO] - 🧩 Service: $SERVICE"
         echo "[INFO] - 🧭 Type: $SERVICE_TYPE"
@@ -265,22 +268,29 @@ runs:
         echo "[INFO] - ⏱️ Duration: $DURATION"
         echo "[INFO] - 🌎 Environment: $ENVIRONMENT"
 
-        echo "Sending metrics to WaaSdashboard..."
+        echo "Sending metrics to WaaS Dashboard..."
+        echo "----------------------------------------"
 
-        curl -X POST ${{ inputs.waas_api_url }}/api/deployments \
-            -H "Content-Type: application/json" \
-            -H "X-API-Key: ${{ inputs.waas_api_key }}" \
-            -d '{
-                "environment": "$ENVIRONMENT",
-                "service": "$SERVICE",
-                "service_type": "$SERVICE_TYPE",
-                "status": "$STATUS",
-                "duration_seconds": $DURATION,
-                "commit_hash": "$SHORT_HASH",
-                "commit_author": "$COMMIT_AUTHOR",
-                "commit_message": "$COMMIT_MESSAGE",
-                "actions_url": "$ACTIONS_URL",
-                "image_tag": "$IMAGE_TAG",
-                "pipeline_id": "${{ github.run_id }}"
-                "triggered_by": "$COMMIT_AUTHOR"
-            }'
+        curl -s -w "\nHTTP %{http_code}\n" -o response.txt \
+          -X POST "$WAAS_API_URL/api/deployments" \
+          -H "Content-Type: application/json" \
+          -H "X-API-Key: $WAAS_API_KEY" \
+          -d "{
+              \"environment\": \"$ENVIRONMENT\",
+              \"service\": \"$SERVICE\",
+              \"service_type\": \"$SERVICE_TYPE\",
+              \"status\": \"$STATUS\",
+              \"duration_seconds\": $DURATION,
+              \"commit_hash\": \"$SHORT_HASH\",
+              \"commit_author\": \"$COMMIT_AUTHOR\",
+              \"commit_message\": \"$COMMIT_MESSAGE\",
+              \"actions_url\": \"$ACTIONS_URL\",
+              \"image_tag\": \"$IMAGE_TAG\",
+              \"pipeline_id\": \"$PIPELINE_ID\",
+              \"triggered_by\": \"$COMMIT_AUTHOR\"
+          }"
+
+        echo "----------------------------------------"
+        echo "[RESPONSE BODY]"
+        cat response.txt
+        echo "----------------------------------------"

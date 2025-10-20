@@ -1,0 +1,182 @@
+name: "IaC Workflow as a Service"
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: "Working Directory"
+        required: true
+        type: string
+      module_targets:
+        description: "Comma separated list of Module Targets"
+        required: false
+        type: string
+      terraform_output:
+        description: "Terraform Output artifact name"
+        required: false
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ----------------------------------------------
+  # Step 1: Terraform Linting and Security Scan
+  #           Comment results on PR 
+  # ---------------------------------------------
+  terraform-linting:
+    name: linting
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Terraform Linting
+        id: linting
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/security/tflint@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
+  terraform-security-scan:
+    name: security-scan
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Terraform Security Scan
+        id: security-scan
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/security/tfsec@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
+  slack-notify-on-scan-failure:
+    name: ⚠️notify-slack
+    needs: [terraform-security-scan]
+    runs-on: ubuntu-latest
+    if: always() && needs.terraform-security-scan.result == 'failure'
+    steps:
+      - name: Notify Slack
+        uses: SeamlessOps/waas/workflow-templates/shared/slack-notify@main
+        with:
+          workflow_type: security-scan
+          status: failure
+          needs_result: ${{ needs.terraform-security-scan.result }}        
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_SCAN }}
+
+  # ----------------------------------------
+  #         Step 2: Terraform Plan
+  # Comment on PR and troubleshoot if needed
+  # ----------------------------------------
+  terraform-setup-and-plan:
+    name: plan
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: [terraform-linting, terraform-security-scan]
+    runs-on: ubuntu-latest
+    outputs:
+      no_changes: ${{ steps.plan.outputs.no_changes }}
+    steps:
+      - name: Terraform Validate and Plan
+        id: plan
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/main/plan@main
+        with:
+          vault_addr: ${{ secrets.VAULT_ADDR }}
+          vault_role: ${{ secrets.VAULT_ROLE }}
+          vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
+          module_targets: ${{ inputs.module_targets }}
+          working_directory: ${{ inputs.working_directory }}
+
+  comment-plan-on-pr:
+    name: comment-plan-on-pr
+    needs: terraform-setup-and-plan
+    if: always() &&
+      needs.terraform-setup-and-plan.outputs.no_changes != 'true' &&
+      needs.terraform-setup-and-plan.result  == 'success'   
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment Plan on PR
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/main/plan/comment-plan-on-pr@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          plan_status: ${{ needs.terraform-setup-and-plan.result }}
+
+  checkov-plan-scan:
+    name: checkov-plan-scan
+    needs: terraform-setup-and-plan
+    if: always() &&
+      needs.terraform-setup-and-plan.outputs.no_changes != 'true' &&
+      needs.terraform-setup-and-plan.result  == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkov Plan Scan
+        id: checkov-plan-scan
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/security/checkov@main
+        with:
+          module_targets: ${{ inputs.module_targets }}
+          working_directory: ${{ inputs.working_directory }}
+
+  slack-notify-on-checkov-failure:
+    name: ⚠️notify-slack
+    needs: [checkov-plan-scan]
+    runs-on: ubuntu-latest
+    if: always() && needs.checkov-plan-scan.result == 'failure'
+    steps:
+      - name: Notify Slack
+        uses: SeamlessOps/waas/workflow-templates/shared/slack-notify@main
+        with:
+          workflow_type: checkov
+          status: failure
+          needs_result: ${{ needs.checkov-plan-scan.result }}        
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_SCAN }}
+
+  troubleshoot-terraform:
+    name: ⚙️troubleshoot
+    needs: terraform-setup-and-plan
+    if: always() && needs.terraform-setup-and-plan.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Troubleshoot Terraform
+        id: troubleshoot
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/ai/trouble-shoot@main
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
+# ---------------------------
+# Step 3: Terraform Apply
+#   Share status on PR
+# ---------------------------
+  terraform-apply:
+    name: apply
+    if: >
+      github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, 'Merge pull request #')
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      no_changes: ${{ steps.apply.outputs.no_changes }}
+    steps:
+      - name: Terraform Apply
+        id: apply
+        uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/main/apply@main
+        with:
+          vault_addr: ${{ secrets.VAULT_ADDR }}
+          vault_role: ${{ secrets.VAULT_ROLE }}
+          vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
+          module_targets: ${{ inputs.module_targets }}
+          working_directory: ${{ inputs.working_directory }}
+
+  # ----------------------------------------------------
+  # Step 4: Slack Notification for Terraform Apply
+  # ----------------------------------------------------
+  slack-notify-terraform-apply:
+    name: notify-slack
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    if: >
+        always() &&
+        needs.terraform-apply.result != 'skipped' &&
+        needs.terraform-apply.outputs.no_changes != 'true'
+    steps:          
+      - name: Notify Slack
+        uses: SeamlessOps/waas/workflow-templates/shared/slack-notify@main
+        with:
+          status: ${{ needs.terraform-apply.result }}
+          workflow_type: terraform-apply
+          needs_result: ${{ needs.terraform-apply.result }}        
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_TERRAFORM }}

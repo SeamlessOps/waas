@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "description": "Dotnet services deployment configuration",
+    "notes": [
+      "Keep services in alphabetical order for consistency",
+      "All services deploy to staging, production deployment is optional"
+    ],
+    "maintainer": "ialexeze",
+    "default_environments": ["staging", "production"]
+  },
+  "services": [
+    {
+      "name": "api",
+      "directory": "ondgo.api"
+    },
+    {
+      "name": "hangfire",
+      "directory": "HangFire.Services"
+    },
+    {
+      "name": "identity",
+      "directory": "ondgo.identity"
+    },
+    {
+      "name": "wallets",
+      "directory": "wallet.api"
+    }
+  ]
+
+}
+
+

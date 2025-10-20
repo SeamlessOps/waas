@@ -1,0 +1,69 @@
+name: Semantic Release for WaaS
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    paths:
+      - 'workflow-templates/**'
+      - '!environment/**'
+      - '!README.md'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for pushing tags
+      id-token: write  # For GitHub token permissions
+
+    steps:
+      - uses: actions/checkout@v5
+        if: github.ref_type == 'tag'
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}  # Explicit token for tag push
+
+      - name: Bump version
+        id: bump
+        if: github.ref_type == 'tag'
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          RELEASE_BRANCHES: main
+          PRERELEASE: false
+          # Add conventional commits support
+          CUSTOM_TAG_NAME: 'v${NEW_VERSION}'
+          # Prevent version conflicts
+          SKIP_ON_COMMIT: 'chore(release):'
+
+      - name: Update floating major tag
+        if: success() && contains(steps.bump.outputs.new_tag, 'v') && github.ref_type == 'tag'
+        run: |
+          VERSION="${{ steps.bump.outputs.new_tag }}"
+          MAJOR="$(echo "$VERSION" | cut -d. -f1)"
+
+          # Debug line          
+          echo "New release: $VERSION"
+          echo "Updating floating tag: $MAJOR"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Delete local tag if exists
+          git tag -d "$MAJOR" || true
+          
+          # Create and push annotated tag
+          git tag -a "$MAJOR" -m "Release $VERSION" "$VERSION"
+          git push origin "$MAJOR" --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          tag_name: ${{ steps.bump.outputs.new_tag }}
+          name: Release ${{ steps.bump.outputs.new_tag }}
+          generate_release_notes: true
