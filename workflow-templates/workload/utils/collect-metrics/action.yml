@@ -271,34 +271,45 @@ runs:
         echo "Sending metrics to WaaS Dashboard..."
         echo "----------------------------------------"
 
-        # Create the JSON payload in a variable first
-        JSON_PAYLOAD=$(cat <<EOF
-        {
-            "environment": "$ENVIRONMENT",
-            "service": "$SERVICE",
-            "service_type": "$SERVICE_TYPE",
-            "status": "$STATUS",
-            "duration_seconds": $DURATION,
-            "commit_hash": "$SHORT_HASH",
-            "commit_author": "$COMMIT_AUTHOR",
-            "commit_message": "$COMMIT_MESSAGE",
-            "actions_url": "$ACTIONS_URL",
-            "image_tag": "$IMAGE_TAG",
-            "pipeline_id": "$PIPELINE_ID",
-            "triggered_by": "$COMMIT_AUTHOR"
-        }
-        EOF
-        )
+        # Use jq to properly format the JSON with escaped characters
+        JSON_PAYLOAD=$(jq -n \
+          --arg environment "$ENVIRONMENT" \
+          --arg service "$SERVICE" \
+          --arg service_type "$SERVICE_TYPE" \
+          --arg status "$STATUS" \
+          --argjson duration_seconds "$DURATION" \
+          --arg commit_hash "$SHORT_HASH" \
+          --arg commit_author "$COMMIT_AUTHOR" \
+          --arg commit_message "$COMMIT_MESSAGE" \
+          --arg actions_url "$ACTIONS_URL" \
+          --arg image_tag "$IMAGE_TAG" \
+          --arg pipeline_id "$PIPELINE_ID" \
+          --arg triggered_by "$COMMIT_AUTHOR" \
+          '{
+            environment: $environment,
+            service: $service,
+            service_type: $service_type,
+            status: $status,
+            duration_seconds: $duration_seconds,
+            commit_hash: $commit_hash,
+            commit_author: $commit_author,
+            commit_message: $commit_message,
+            actions_url: $actions_url,
+            image_tag: $image_tag,
+            pipeline_id: $pipeline_id,
+            triggered_by: $triggered_by
+          }')
 
         echo "Payload being sent:"
         echo "$JSON_PAYLOAD"
         echo "----------------------------------------"
 
-        curl -v -s -w "\nHTTP %{http_code}\n" -o response.txt \
+        curl -s -w "\nHTTP %{http_code}\n" -o response.txt \
           -X POST "$WAAS_API_URL/api/deployments" \
           -H "Content-Type: application/json" \
           -H "X-API-Key: $WAAS_API_KEY" \
           -d "$JSON_PAYLOAD"
+
         echo "----------------------------------------"
         echo "[RESPONSE BODY]"
         cat response.txt
