@@ -35,6 +35,14 @@ inputs:
   environment:
     description: 'Environment to update (development, staging, production)'
     required: true
+  gitops_repo:
+    description: 'GitOps repository URL'
+    required: false
+    default: 'SeamlessOps/products.git'
+  git_ref:
+    description: 'The GitOps branch to use'
+    required: false
+    default: 'main'
   vault_addr:
     description: 'Vault address'
     required: true
