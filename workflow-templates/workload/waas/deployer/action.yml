@@ -4,6 +4,10 @@ inputs:
   service:
     description: 'Service name'
     required: true
+  service_type:
+    description: 'Service type'
+    required: false
+    default: 'unknown'
   directory:
     description: 'Service directory to build'
     required: true
@@ -194,6 +198,7 @@ runs:
       with:
         environment: ${{ inputs.environment }}
         service: ${{ inputs.service }}
+        service_type: ${{ inputs.service_type }}
         status: ${{ steps.build-and-publish.outputs.status }}
         duration: ${{ steps.calculate-duration.outputs.duration }}
         git_token: ${{ env.GIT_TOKEN }}

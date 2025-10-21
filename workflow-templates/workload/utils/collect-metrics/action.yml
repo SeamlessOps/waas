@@ -1,14 +1,10 @@
 name: 'Collect Deployment Metrics'
 description: 'Collects deployment metrics and sends to dashboard API'
 inputs:
-  backend_services:
-    description: 'List of Backend services'
+  service_type:
+    description: 'Service type'
     required: false
-    default: '["ondgo"]'
-  frontend_services:
-    description: 'List of Frontend services'
-    required: false
-    default: '["ondgo-frontend"]'
+    default: 'unknown'
   metrics_dir:
     description: 'Metrics Directory'
     required: false
@@ -82,45 +78,6 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Determine Service Type
-      id: service-type
-      shell: bash
-      run: |
-        set -e
-
-        REPO_NAME="${{ github.event.repository.name }}"
-        BACKEND_SERVICES_JSON='${{ inputs.backend_services }}'
-        FRONTEND_SERVICES_JSON='${{ inputs.frontend_services }}'
-
-        echo "[INFO] - 🧩 Service detected: $REPO_NAME"
-        echo "[INFO] - 🔎 Checking type..."
-
-        # Parse JSON safely
-        BACKEND_SERVICES=$(echo "$BACKEND_SERVICES_JSON" | jq -r '.[]')
-        FRONTEND_SERVICES=$(echo "$FRONTEND_SERVICES_JSON" | jq -r '.[]')
-
-        echo "[INFO] - Backend list: $BACKEND_SERVICES"
-        echo "[INFO] - Frontend list: $FRONTEND_SERVICES"
-
-        for svc in $BACKEND_SERVICES; do
-          if [[ "$svc" == "$REPO_NAME" ]]; then
-            echo "service_type=backend" >> $GITHUB_OUTPUT
-            echo "[INFO] - ⚙️ Type: Backend service"
-            exit 0
-          fi
-        done
-
-        for svc in $FRONTEND_SERVICES; do
-          if [[ "$svc" == "$REPO_NAME" ]]; then
-            echo "service_type=frontend" >> $GITHUB_OUTPUT
-            echo "[INFO] - 🖥️ Type: Frontend service"
-            exit 0
-          fi
-        done
-
-        echo "service_type=unknown" >> $GITHUB_OUTPUT
-        echo "[WARN] - ❓ Unknown service type"
-
     - name: Checkout GitOps Repository
       uses: actions/checkout@v5
       with:
@@ -142,13 +99,14 @@ runs:
       env:
         COMMIT_AUTHOR: ${{ inputs.commit_author }}
         COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        COMMIT_HASH: ${{ github.sha }}
+        PIPELINE_ID: ${{ github.run_id }}
         METRICS_FILE: ${{ inputs.metrics_dir }}/${{ inputs.metrics_file }}
         METRICS_SCRIPT: ${{ inputs.metrics_dir }}/${{ inputs.metrics_script }}
         SERVICE: ${{ inputs.service }}
-        SERVICE_TYPE: ${{ steps.service-type.outputs.service_type }}
+        SERVICE_TYPE: ${{ inputs.service_type }}
         STATUS: ${{ inputs.status }}
         DURATION: ${{ inputs.duration }}
-        COMMIT_HASH: ${{ github.sha }}
         ACTIONS_URL: ${{ github.server_url }}/${{ github.repository_owner }}/${{ github.event.repository.name }}/actions/runs/${{github.run_id }}
         REPOSITORY: ${{ github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
@@ -233,7 +191,7 @@ runs:
           fi
         done
 
-    - name: Update WaaS Dashboard
+    - name: Collect Metrics and Update WaaS Dashboard
       id: update-waas-dashboard
       if: always()
       shell: bash
@@ -241,7 +199,7 @@ runs:
         COMMIT_AUTHOR: ${{ inputs.commit_author }}
         COMMIT_MESSAGE: ${{ inputs.commit_message }}
         SERVICE: ${{ inputs.service }}
-        SERVICE_TYPE: ${{ steps.service-type.outputs.service_type }}
+        SERVICE_TYPE: ${{ inputs.service_type }}
         STATUS: ${{ inputs.status }}
         DURATION: ${{ inputs.duration }}
         COMMIT_HASH: ${{ github.sha }}
@@ -256,6 +214,7 @@ runs:
         set -e
 
         SHORT_HASH=$(echo "${COMMIT_HASH::7}")
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.%6N")
 
         echo "[INFO] - 🧩 Service: $SERVICE"
         echo "[INFO] - 🧭 Type: $SERVICE_TYPE"
@@ -266,6 +225,7 @@ runs:
         echo "[INFO] - ⏳ Commit Hash: $SHORT_HASH"
         echo "[INFO] - 📝 Commit Message: $COMMIT_MESSAGE"
         echo "[INFO] - 🤖 Action URL: $ACTIONS_URL"
+        echo "[INFO] - ⏳ Timestamp: $TIMESTAMP"
         echo "[INFO] - ⏱️ Duration: $DURATION"
         echo "[INFO] - 🌎 Environment: $ENVIRONMENT"
 
@@ -279,6 +239,7 @@ runs:
           --arg service_type "$SERVICE_TYPE" \
           --arg status "$STATUS" \
           --argjson duration_seconds "$DURATION" \
+          --arg timestamp "$TIMESTAMP" \
           --arg commit_hash "$SHORT_HASH" \
           --arg commit_author "$COMMIT_AUTHOR" \
           --arg commit_message "$COMMIT_MESSAGE" \
@@ -292,6 +253,7 @@ runs:
             service_type: $service_type,
             status: $status,
             duration_seconds: $duration_seconds,
+            timestamp: $timestamp,
             commit_hash: $commit_hash,
             commit_author: $commit_author,
             commit_message: $commit_message,
