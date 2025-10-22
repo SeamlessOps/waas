@@ -187,7 +187,7 @@ runs:
         
         echo "Calculated duration: $duration seconds"
         echo "duration=$duration" >> $GITHUB_OUTPUT
-
+    
     - name: Collect Metrics for ${{ inputs.service }}
       id: collect-metrics
       if: >
@@ -200,7 +200,7 @@ runs:
         service: ${{ inputs.service }}
         service_type: ${{ inputs.service_type }}
         status: ${{ steps.build-and-publish.outputs.status }}
-        duration: ${{ steps.calculate-duration.outputs.duration }}
+        duration: ${{ steps.calculate-duration.outputs.duration || job.status }}
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
