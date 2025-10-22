@@ -187,7 +187,31 @@ runs:
         
         echo "Calculated duration: $duration seconds"
         echo "duration=$duration" >> $GITHUB_OUTPUT
-    
+
+    - name: Determine build status
+      id: determine-status
+      if: >
+        always() &&
+        steps.confirm-image-tag.outputs.no-changes != 'true' && 
+        steps.validate-project-type.outputs.valid-project-type == 'true'
+      shell: bash
+      run: |
+        if [[ "${{ steps.build-and-publish.outcome }}" == "success" ]]; then
+          status="success"
+        elif [[ "${{ steps.build-and-publish.outcome }}" == "failure" ]]; then
+          status="failure"
+        else
+          status="unknown"
+        fi
+
+        # Prefer output if available
+        if [[ -n "${{ steps.build-and-publish.outputs.status }}" ]]; then
+          status="${{ steps.build-and-publish.outputs.status }}"
+        fi
+
+        echo "[INFO] Final status determined: $status"
+        echo "status=$status" >> $GITHUB_OUTPUT
+
     - name: Collect Metrics for ${{ inputs.service }}
       id: collect-metrics
       if: >
@@ -199,8 +223,8 @@ runs:
         environment: ${{ inputs.environment }}
         service: ${{ inputs.service }}
         service_type: ${{ inputs.service_type }}
-        status: ${{ steps.build-and-publish.outputs.status }}
-        duration: ${{ steps.calculate-duration.outputs.duration || job.status }}
+        status: ${{ steps.build-and-publish.outputs.status || job.status }}
+        duration: ${{ steps.calculate-duration.outputs.duration }}
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
