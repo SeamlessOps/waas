@@ -223,7 +223,7 @@ runs:
         environment: ${{ inputs.environment }}
         service: ${{ inputs.service }}
         service_type: ${{ inputs.service_type }}
-        status: ${{ steps.build-and-publish.outputs.status || job.status }}
+        status: ${{ steps.determine-status.outputs.status }}
         duration: ${{ steps.calculate-duration.outputs.duration }}
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
