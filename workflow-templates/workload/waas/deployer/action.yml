@@ -220,14 +220,11 @@ runs:
         steps.validate-project-type.outputs.valid-project-type == 'true'
       uses: SeamlessOps/waas/workflow-templates/workload/utils/collect-metrics@main
       with:
-        environment: ${{ inputs.environment }}
         service: ${{ inputs.service }}
         service_type: ${{ inputs.service_type }}
+        environment: ${{ inputs.environment }}
         status: ${{ steps.determine-status.outputs.status }}
         duration: ${{ steps.calculate-duration.outputs.duration }}
-        git_token: ${{ env.GIT_TOKEN }}
-        gitops_repo: ${{ inputs.gitops_repo }}
-        git_ref: ${{ inputs.git_ref }}
         image_tag: ${{ steps.build-and-publish.outputs.image_tag }}
         waas_api_url: ${{ env.WAAS_API_URL }}
         waas_api_key: ${{ env.WAAS_API_KEY }}
