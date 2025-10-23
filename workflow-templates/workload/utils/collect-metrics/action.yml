@@ -5,22 +5,6 @@ inputs:
     description: 'Service type'
     required: false
     default: 'unknown'
-  metrics_dir:
-    description: 'Metrics Directory'
-    required: false
-    default: 'waas-metrics'
-  metrics_script:
-    description: 'Metrics Script'
-    required: false
-    default: 'scripts/update_metrics.py'
-  metrics_file:
-    description: 'Metrics file path'
-    required: false
-    default: 'data/deployments.json'
-  python_version:
-    description: 'Python Version'
-    required: false
-    default: '3.13'
   environment:
     description: 'Deployment environment'
     required: true
@@ -34,43 +18,12 @@ inputs:
     description: 'Deployment duration'
     required: false
     default: '0'
-  commit_author:
-    description: 'Commit author'
-    required: false
-    default: '${{ github.actor }}'
-  commit_message:
-    description: 'Commit message'
-    required: false
-    default: '${{ github.event.head_commit.message }}'
   waas_api_url:
     description: 'WaaS API URL'
     required: false
   waas_api_key:
     description: 'WaaS API Key'
     required: false
-  git_token:
-    description: 'GitHub token for pushing changes'
-    required: true
-  gitops_repo:
-    description: 'GitOps repository URL'
-    required: false
-    default: 'SeamlessOps/products.git'
-  git_ref:
-    description: 'The GitOps branch to use'
-    required: false
-    default: 'main'
-  git_update_max_retries:
-    description: 'Maximum retries for updating GitOps repository'
-    required: false
-    default: '5'
-  git_user_name:
-    description: 'GitHub username for pushing changes'
-    required: false
-    default: "github-actions[bot]"
-  git_user_email:
-    description: 'GitHub user email for pushing changes'
-    required: false
-    default: "41898282+github-actions[bot]@users.noreply.github.com"
   image_tag:
     description: 'New image tag to build and publish'
     required: true
@@ -78,138 +31,25 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Checkout GitOps Repository
-      uses: actions/checkout@v5
-      with:
-        repository: ${{ inputs.gitops_repo }}
-        token: ${{ inputs.git_token }}
-        ref: ${{ inputs.git_ref }}
-        sparse-checkout: ${{ inputs.metrics_dir }}
-        sparse-checkout-cone-mode: false
-        fetch-depth: 1
-
-    - name: Setup Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: ${{ inputs.python_version }}
-
-    - name: Update metrics JSON
-      id: update-metrics-json
-      shell: bash
-      env:
-        COMMIT_AUTHOR: ${{ inputs.commit_author }}
-        COMMIT_MESSAGE: ${{ inputs.commit_message }}
-        COMMIT_HASH: ${{ github.sha }}
-        PIPELINE_ID: ${{ github.run_id }}
-        METRICS_FILE: ${{ inputs.metrics_dir }}/${{ inputs.metrics_file }}
-        METRICS_SCRIPT: ${{ inputs.metrics_dir }}/${{ inputs.metrics_script }}
-        SERVICE: ${{ inputs.service }}
-        SERVICE_TYPE: ${{ inputs.service_type }}
-        STATUS: ${{ inputs.status }}
-        DURATION: ${{ inputs.duration }}
-        ACTIONS_URL: ${{ github.server_url }}/${{ github.repository_owner }}/${{ github.event.repository.name }}/actions/runs/${{github.run_id }}
-        REPOSITORY: ${{ github.event.repository.name }}
-        ENVIRONMENT: ${{ inputs.environment }}
-        IMAGE_TAG: ${{ inputs.image_tag }} 
-      run: |
-        SHORT_HASH=$(echo ${COMMIT_HASH::7})
-
-        echo "[INFO] - 🧩 Service: $SERVICE"
-        echo "[INFO] - 🧭 Type: $SERVICE_TYPE"
-        echo "[INFO] - 📋 Image Tag: $IMAGE_TAG"
-        echo "[INFO] - 🏛️ Repository: $REPOSITORY"
-        echo "[INFO] - 🚦 Status: $STATUS"
-        echo "[INFO] - 👤 Commit Author: $COMMIT_AUTHOR"
-        echo "[INFO] - ⏳ Commit Hash: $SHORT_HASH"
-        echo "[INFO] - 📝 Commit Message: $COMMIT_MESSAGE"
-        echo "[INFO] - 🤖 Action URL: $ACTIONS_URL"
-        echo "[INFO] - ⏱️ Duration: $DURATION"
-        echo "[INFO] - 🌎 Environment: $ENVIRONMENT"
-        
-        # Run the metrics collector script
-        python $METRICS_SCRIPT \
-          --environment "$ENVIRONMENT" \
-          --service "$SERVICE" \
-          --service_type "$SERVICE_TYPE" \
-          --status "$STATUS" \
-          --duration "$DURATION" \
-          --commit_hash "$SHORT_HASH" \
-          --actions_url "$ACTIONS_URL" \
-          --image_tag "$IMAGE_TAG"
-        
-        # Export outputs
-        echo "METRICS_FILE=$METRICS_FILE" >> $GITHUB_OUTPUT
-        echo "METRICS_FILE=$METRICS_FILE" >> $GITHUB_ENV
-
-    - name: Commit and Push Metric
-      shell: bash
-      id: update-gitops
-      env:
-        METRICS_FILE: ${{ env.METRICS_FILE }}
-      run: |
-        # Create directory structure if it doesn't exist
-        mkdir -p $(dirname "$METRICS_FILE")
-        
-        git config user.name "${{ inputs.git_user_name }}"
-        git config user.email "${{ inputs.git_user_email }}"
-        git add "$METRICS_FILE"
-
-        # Check if there are any changes to commit
-        if git diff --staged --quiet; then
-          echo "✅ No changes to commit"
-
-          # Export NO_CHANGES to outputs and ENV
-          echo "NO_CHANGES=true" >> $GITHUB_ENV
-          echo "no-changes=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        git commit -m "deploy(${{ inputs.service }}): update deployment metrics for ${{ inputs.environment }}"
-
-        # Push with enhanced retry logic and better error handling
-        max_retries=${{ inputs.git_update_max_retries }}
-        
-        for i in $(seq 1 $max_retries); do
-          if git pull --rebase origin ${{ inputs.git_ref }}; then
-            if git push origin ${{ inputs.git_ref }}; then
-              echo "✅ Metrics pushed successfully on attempt $i"
-              break
-            else
-              echo "⚠️ Push failed (attempt $i/$max_retries), retrying in 5 seconds..."
-              sleep 5
-            fi
-          else
-            echo "::error::Failed to pull and rebase changes from origin/${{ inputs.git_ref }}"
-            echo "Please check for merge conflicts or repository permissions."
-            exit 1
-          fi
-          
-          if [ $i -eq $max_retries ]; then
-            echo "::error::Failed to push changes after $max_retries attempts"
-            echo "Please check repository permissions and try again."
-            exit 1
-          fi
-        done
-
     - name: Collect Metrics and Update WaaS Dashboard
       id: update-waas-dashboard
       if: always()
       shell: bash
       env:
-        COMMIT_AUTHOR: ${{ inputs.commit_author }}
-        COMMIT_MESSAGE: ${{ inputs.commit_message }}
         SERVICE: ${{ inputs.service }}
         SERVICE_TYPE: ${{ inputs.service_type }}
         STATUS: ${{ inputs.status }}
         DURATION: ${{ inputs.duration }}
-        COMMIT_HASH: ${{ github.sha }}
-        PIPELINE_ID: ${{ github.run_id }}
-        ACTIONS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        REPOSITORY: ${{ github.event.repository.name }}
         ENVIRONMENT: ${{ inputs.environment }}
         IMAGE_TAG: ${{ inputs.image_tag }}
         WAAS_API_URL: ${{ inputs.waas_api_url }}
         WAAS_API_KEY: ${{ inputs.waas_api_key }}
+        COMMIT_HASH: ${{ github.sha }}
+        COMMIT_AUTHOR: ${{ github.actor }}
+        PIPELINE_ID: ${{ github.run_id }}
+        COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        ACTIONS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        REPOSITORY: ${{ github.event.repository.name }}
       run: |
         set -e
 
