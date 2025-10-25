@@ -220,13 +220,12 @@ runs:
           status="unknown"
         fi
 
-        # Prefer output if available
-          # 1. Check if failure happened in project build steps
-        if [[ -n "${{ steps.determine-project-status.projectStatus }}" ]]; then
-          status="${{ steps.determine-project-status.projectStatus }}"
+        # 1. Prefer output if build step reported failure
+        if [[ -n "${{ steps.determine-project-status.outputs.projectStatus }}" ]]; then
+          status="${{ steps.determine-project-status.outputs.projectStatus }}"
         fi
 
-          # 2. Check output from build and publish 
+        # 2. Override with explicit output from build-and-publish if available
         if [[ -n "${{ steps.build-and-publish.outputs.status }}" ]]; then
           status="${{ steps.build-and-publish.outputs.status }}"
         fi

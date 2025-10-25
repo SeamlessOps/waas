@@ -127,7 +127,7 @@ runs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Actual dist contents:" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            find "$ARTIFACT_DIR" -type f -name "*" | head -20 >> $GITHUB_STEP_SUMMARY
+            find "$ARTIFACT_DIR" -type f -name "*" | head -20 || true >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "[INFO] - Project '$NX_PROJECT' not found in any expected location!"
             echo "build-status=failure" >> $GITHUB_OUTPUT
