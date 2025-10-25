@@ -46,6 +46,7 @@ runs:
 
     - name: Wait for File System Sync
       shell: bash
+      if: success()
       run: |
         echo "[INFO] - Waiting for file system to sync..."
         sleep 5
@@ -54,6 +55,7 @@ runs:
     - name: Verify Build Artifacts
       id: verify-artifacts
       shell: bash
+      if: always()
       env:
         NX_PROJECT: ${{ inputs.nx_project }}
         ARTIFACT_DIR: ${{ inputs.artifact_dir }}
@@ -76,6 +78,7 @@ runs:
           ls -la >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "[INFO] - '$ARTIFACT_DIR' directory not found!"
+          echo "build-status=failure" >> $GITHUB_OUTPUT
           exit 1
         fi
 
@@ -127,6 +130,7 @@ runs:
             find "$ARTIFACT_DIR" -type f -name "*" | head -20 >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "[INFO] - Project '$NX_PROJECT' not found in any expected location!"
+            echo "build-status=failure" >> $GITHUB_OUTPUT
             exit 1
           fi
 
@@ -136,6 +140,8 @@ runs:
             if [ -f "$FOUND_PATH/$file" ] || [ -f "$FOUND_PATH/dist/$file" ] || [ -f "$FOUND_PATH/build/$file" ]; then
               echo "[INFO] - Essential file pattern found: $file"
               break
+            else
+              echo "build-status=failure" >> $GITHUB_OUTPUT
             fi
           done
 

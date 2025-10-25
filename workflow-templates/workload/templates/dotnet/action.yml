@@ -24,6 +24,7 @@ runs:
     
     - name: Verify and Restore .NET Project
       id: verify-dotnet-project
+      if: always()
       shell: bash
       run: |
         set -euo pipefail

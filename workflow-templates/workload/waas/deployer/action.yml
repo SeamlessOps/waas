@@ -64,6 +64,12 @@ outputs:
   no-changes:
     description: 'Toggle to skip build and publish if image is up-to-date'
     value: ${{ steps.confirm-image-tag.outputs.no-changes }}
+  projectStatus:
+    description: 'Project build status'
+    valus: ${{ steps.determine-project-status.outputs.projectStatus }}
+  status:
+    description: 'Docker build status'
+    valus: ${{ steps.determine-project-status.outputs.projectStatus }}
 
 runs:
   using: "composite"
@@ -150,6 +156,16 @@ runs:
         nx_project: ${{ inputs.nx_project }}
         environment: ${{ inputs.environment }}
 
+    - name: Determine project status
+      id: determine-project-status
+      if: failure()
+      shell: bash
+      env:
+        projectStatus: failure
+      run: |
+        echo "[INFO] Final project status determined: $projectStatus"
+        echo "projectStatus=$projectStatus" >> $GITHUB_OUTPUT
+
     - name: Build and Publish Docker Image
       id: build-and-publish
       if: >
@@ -188,7 +204,7 @@ runs:
         echo "Calculated duration: $duration seconds"
         echo "duration=$duration" >> $GITHUB_OUTPUT
 
-    - name: Determine build status
+    - name: Determine docker build status
       id: determine-status
       if: >
         always() &&
@@ -205,6 +221,12 @@ runs:
         fi
 
         # Prefer output if available
+          # 1. Check if failure happened in project build steps
+        if [[ -n "${{ steps.determine-project-status.projectStatus }}" ]]; then
+          status="${{ steps.determine-project-status.projectStatus }}"
+        fi
+
+          # 2. Check output from build and publish 
         if [[ -n "${{ steps.build-and-publish.outputs.status }}" ]]; then
           status="${{ steps.build-and-publish.outputs.status }}"
         fi
