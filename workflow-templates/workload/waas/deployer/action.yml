@@ -66,10 +66,10 @@ outputs:
     value: ${{ steps.confirm-image-tag.outputs.no-changes }}
   projectStatus:
     description: 'Project build status'
-    valus: ${{ steps.determine-project-status.outputs.projectStatus }}
+    value: ${{ steps.determine-project-status.outputs.projectStatus }}
   status:
     description: 'Docker build status'
-    valus: ${{ steps.determine-project-status.outputs.projectStatus }}
+    value: ${{ steps.determine-project-status.outputs.projectStatus }}
 
 runs:
   using: "composite"
