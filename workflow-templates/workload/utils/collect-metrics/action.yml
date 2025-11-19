@@ -117,3 +117,5 @@ runs:
         echo "[RESPONSE BODY]"
         cat response.txt
         echo "----------------------------------------"
+
+        echo "View Workflow metrics here: "$WAAS_API_URL""
