@@ -1,5 +1,5 @@
-name: '.NET Action: Build and Publish Docker Image'
-description: '.NET reusable action for building and publishing .NET docker images'
+name: '.NET Action: WaaS Deployer'
+description: 'Deploys workload to multiple configured environments'
 inputs:
   service:
     description: 'Service name'
@@ -147,6 +147,7 @@ runs:
       uses: SeamlessOps/waas/workflow-templates/workload/templates/dotnet@main
       with:
         directory: ${{ inputs.directory }}
+        dotnet_version: ${{ inputs.dotnet_version }}
 
     - name: Build Nx Project
       id: build-nx

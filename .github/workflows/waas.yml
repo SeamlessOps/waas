@@ -12,6 +12,11 @@ on:
         description: 'Project type (dotnet, nx, node, python, etc)'
         required: true
         type: string
+      dotnet_version:
+        description: '.Net version'
+        required: false
+        type: string
+        default: '9.0.x'
       services_file:
         description: 'JSON file containing service definitions.'
         required: false
@@ -149,6 +154,7 @@ jobs:
       PROJECT_TYPE: ${{ inputs.project_type }}
       CONFIG: ${{ needs.waas-router.outputs.config }}
       DIRECTORY: ${{ matrix.service.directory }}
+      DOTNET_VERSION: ${{ inputs.dotnet_version }}
       DOMAIN: ${{ needs.waas-router.outputs.domain }}
       ENVIRONMENT: ${{ needs.waas-router.outputs.environment }}
       SERVICE: ${{ matrix.service.name }}
@@ -170,6 +176,7 @@ jobs:
           build_configuration: ${{ env.CONFIG }}
           environment: ${{ env.ENVIRONMENT }}
           directory: ${{ env.DIRECTORY}}
+          dotnet_version: ${{ env.DOTNET_VERSION }}
           dockerfile: ${{ inputs.dockerfile }}
           nx_project: ${{ env.NX_PROJECT }}
           project_type: ${{ env.PROJECT_TYPE }}
