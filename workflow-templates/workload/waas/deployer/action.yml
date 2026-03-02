@@ -156,6 +156,7 @@ runs:
       with:
         nx_project: ${{ inputs.nx_project }}
         environment: ${{ inputs.environment }}
+        node_version: ${{ inputs.node_version }}
 
     - name: Determine project status
       id: determine-project-status
