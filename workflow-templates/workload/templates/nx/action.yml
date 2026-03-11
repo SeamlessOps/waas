@@ -42,7 +42,7 @@ runs:
     # -------------------------
     # Nx Build with Error Capture + OOM Retry
     # -------------------------
-    - name: Build Nx project (with clean error capture)
+    - name: Build Nx project
       id: build-nx
       shell: bash
       env:
@@ -84,8 +84,8 @@ runs:
           ERROR_LINE="Unknown error — see context below"
         fi
 
-        # Extract 20 lines of context around the error
-        ERROR_CONTEXT=$(echo "$CLEAN_OUTPUT" | grep -iEA20 "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory")
+        # Extract 15 lines of context around the error
+        ERROR_CONTEXT=$(echo "$CLEAN_OUTPUT" | grep -iEA15 "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory")
 
         if [ $EXIT_CODE -ne 0 ]; then
           echo "## ❌ Nx Build Failed" >> $GITHUB_STEP_SUMMARY
