@@ -42,7 +42,7 @@ runs:
     # -------------------------
     # Nx Build with Error Capture
     # -------------------------
-    - name: Build Nx project (with error capture + retry)
+    - name: Build Nx project with retry
       id: build-nx
       shell: bash
       env:
@@ -98,7 +98,7 @@ runs:
         echo "build-status=success" >> $GITHUB_OUTPUT
 
     # -------------------------
-    # Verify Artifacts (unchanged)
+    # Verify Artifacts
     # -------------------------
     - name: Wait for File System Sync
       shell: bash
