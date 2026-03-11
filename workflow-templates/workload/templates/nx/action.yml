@@ -50,10 +50,13 @@ runs:
         ENVIRONMENT: ${{ inputs.environment }}
       run: |
         echo "[INFO] Running Nx build for project: $NX_PROJECT"
+        BUILD_OUT=$(mktemp)
+        BUILD_CMD="npx nx build $NX_PROJECT --configuration=$ENVIRONMENT"
+        RETRY_BUILD_CMD="NODE_OPTIONS="--max-old-space-size=4096" npx nx build $NX_PROJECT --configuration=$ENVIRONMENT
 
         run_nx() {
           set +e
-          OUTPUT=$(npx nx build "$NX_PROJECT" --configuration="$ENVIRONMENT" 2>&1)
+          $BUILD_CMD | tee "$BUILD_OUT"
           EXIT_CODE=$?
           set -e
         }
@@ -62,20 +65,20 @@ runs:
         run_nx
 
         # Strip ANSI escape codes
-        CLEAN_OUTPUT=$(echo "$OUTPUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
+        CLEAN_OUTPUT=$(echo "$BUILD_OUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
 
         # Detect OOM
-        if echo "$CLEAN_OUTPUT" | grep -qi "heap out of memory"; then
-          echo "[WARN] OOM detected. Retrying with increased heap..."
-          echo "## ⚠️ Nx Build OOM Detected — Retrying with 4GB heap" >> $GITHUB_STEP_SUMMARY
+        # if echo "$CLEAN_OUTPUT" | grep -qi "heap out of memory"; then
+        #   echo "[WARN] OOM detected. Retrying with increased heap..."
+        #   echo "## ⚠️ Nx Build OOM Detected — Retrying with 4GB heap" >> $GITHUB_STEP_SUMMARY
 
-          set +e
-          OUTPUT=$(NODE_OPTIONS="--max-old-space-size=4096" npx nx build "$NX_PROJECT" --configuration="$ENVIRONMENT" 2>&1)
-          EXIT_CODE=$?
-          set -e
+        #   set +e
+        #   $RETRY_BUILD_CMD | tee $BUILD_OUT
+        #   EXIT_CODE=$?
+        #   set -e
 
-          CLEAN_OUTPUT=$(echo "$OUTPUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
-        fi
+        #   CLEAN_OUTPUT=$(echo "$BUILD_OUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
+        # fi
 
         # Extract first meaningful error
         ERROR_LINE=$(echo "$CLEAN_OUTPUT" | grep -iE "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory" | head -n 1)
