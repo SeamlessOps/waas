@@ -35,6 +35,23 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Normalize Slack Status
+      id: normalized
+      shell: bash
+      run: |
+        case "${{ inputs.status }}" in
+          success|failure|cancelled)
+            NORMALIZED="${{ inputs.status }}"
+            ;;
+          skipped)
+            NORMALIZED="success"
+            ;;
+          *)
+            NORMALIZED="custom"
+            ;;
+        esac
+        echo "normalized=$NORMALIZED" >> $GITHUB_OUTPUT
+
     - name: Determine Notification Content
       id: notification-content
       shell: bash
@@ -90,7 +107,7 @@ runs:
       with:
         fields: commit,workflow                 # workflow,message,commit,author
         mention: ${{ inputs.mention }}
-        status: ${{ inputs.status }}
+        status: ${{ steps.normalized.outputs.normalized }}
         text: |
           ${{ steps.notification-content.outputs.title }} Notification
 
