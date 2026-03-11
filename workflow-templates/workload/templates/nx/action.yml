@@ -52,12 +52,11 @@ runs:
         echo "[INFO] Running Nx build for project: $NX_PROJECT"
         BUILD_OUT=$(mktemp)
         BUILD_CMD="npx nx build $NX_PROJECT --configuration=$ENVIRONMENT"
-        RETRY_BUILD_CMD="NODE_OPTIONS=\"--max-old-space-size=4096\" npx nx build $NX_PROJECT --configuration=$ENVIRONMENT"
 
         run_nx() {
           set +e
-          $BUILD_CMD | tee "$BUILD_OUT"
-          EXIT_CODE=$?
+          $BUILD_CMD 2>&1 | tee "$BUILD_OUT"
+          EXIT_CODE=${PIPESTATUS[0]}  # Get the exit code of the build command, not tee
           set -e
         }
 
@@ -65,32 +64,20 @@ runs:
         run_nx
 
         # Strip ANSI escape codes
-        CLEAN_OUTPUT=$(cat "$BUILD_OUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
+        CLEAN_OUTPUT=$(cat "$BUILD_OUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g" 2>/dev/null || true)
 
-        # Detect OOM
-        # if echo "$CLEAN_OUTPUT" | grep -qi "heap out of memory"; then
-        #   echo "[WARN] OOM detected. Retrying with increased heap..."
-        #   echo "## ⚠️ Nx Build OOM Detected — Retrying with 4GB heap" >> $GITHUB_STEP_SUMMARY
-        #
-        #   set +e
-        #   $RETRY_BUILD_CMD | tee "$BUILD_OUT"
-        #   EXIT_CODE=$?
-        #   set -e
-        #
-        #   CLEAN_OUTPUT=$(cat "$BUILD_OUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
-        # fi
-
-        # Extract first meaningful error
-        ERROR_LINE=$(echo "$CLEAN_OUTPUT" | grep -iE "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory" | head -n 1)
-
-        if [ -z "$ERROR_LINE" ]; then
-          ERROR_LINE="Unknown error — see context below"
-        fi
-
-        # Extract 15 lines of context around the error
-        ERROR_CONTEXT=$(echo "$CLEAN_OUTPUT" | grep -iEA15 "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory")
-
+        # Check if build failed
         if [ $EXIT_CODE -ne 0 ]; then
+          # Extract first meaningful error
+          ERROR_LINE=$(echo "$CLEAN_OUTPUT" | grep -iE "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory" | head -n 1 || true)
+          
+          if [ -z "$ERROR_LINE" ]; then
+            ERROR_LINE="Unknown error — see context below"
+          fi
+
+          # Extract 15 lines of context around the error
+          ERROR_CONTEXT=$(echo "$CLEAN_OUTPUT" | grep -iEA15 "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory" || true)
+
           echo "## ❌ Nx Build Failed" >> $GITHUB_STEP_SUMMARY
           echo "**Project:** $NX_PROJECT" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
