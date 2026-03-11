@@ -18,7 +18,8 @@ inputs:
   status:
     description: "Status of the job (success, failure, etc.)"
     required: false
-    default: ${{ job.status }}
+    # default: ${{ job.status }}
+    default: cancelled
   needs_result:
     description: "Result from the needed job"
     required: true
