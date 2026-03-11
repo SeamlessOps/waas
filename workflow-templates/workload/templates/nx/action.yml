@@ -40,9 +40,9 @@ runs:
       run: npm install --legacy-peer-deps
 
     # -------------------------
-    # Nx Build with Error Capture
+    # Nx Build with Error Capture + OOM Retry
     # -------------------------
-    - name: Build Nx project with retry
+    - name: Build Nx project (with clean error capture)
       id: build-nx
       shell: bash
       env:
@@ -51,43 +51,55 @@ runs:
       run: |
         echo "[INFO] Running Nx build for project: $NX_PROJECT"
 
-        set +e
-        OUTPUT=$(npx nx build "$NX_PROJECT" --configuration="$ENVIRONMENT" 2>&1)
-        EXIT_CODE=$?
-        set -e
+        run_nx() {
+          set +e
+          OUTPUT=$(npx nx build "$NX_PROJECT" --configuration="$ENVIRONMENT" 2>&1)
+          EXIT_CODE=$?
+          set -e
+        }
 
-        echo "$OUTPUT"
+        # First attempt
+        run_nx
 
-        # Save raw output
-        echo "nx_output<<EOF" >> $GITHUB_OUTPUT
-        echo "$OUTPUT" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        # Strip ANSI escape codes
+        CLEAN_OUTPUT=$(echo "$OUTPUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
 
         # Detect OOM
-        if echo "$OUTPUT" | grep -q "JavaScript heap out of memory"; then
+        if echo "$CLEAN_OUTPUT" | grep -qi "heap out of memory"; then
           echo "[WARN] OOM detected. Retrying with increased heap..."
-          echo "## ⚠️ Nx Build OOM Detected — Retrying" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚠️ Nx Build OOM Detected — Retrying with 4GB heap" >> $GITHUB_STEP_SUMMARY
 
           set +e
           OUTPUT=$(NODE_OPTIONS="--max-old-space-size=4096" npx nx build "$NX_PROJECT" --configuration="$ENVIRONMENT" 2>&1)
           EXIT_CODE=$?
           set -e
 
-          echo "$OUTPUT"
-
-          echo "nx_output<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          CLEAN_OUTPUT=$(echo "$OUTPUT" | sed -r "s/\x1B\[[0-9;]*[mK]//g")
         fi
+
+        # Extract first meaningful error
+        ERROR_LINE=$(echo "$CLEAN_OUTPUT" | grep -iE "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory" | head -n 1)
+
+        if [ -z "$ERROR_LINE" ]; then
+          ERROR_LINE="Unknown error — see context below"
+        fi
+
+        # Extract 20 lines of context around the error
+        ERROR_CONTEXT=$(echo "$CLEAN_OUTPUT" | grep -iEA20 "FATAL ERROR|Error:|ERROR:|ERR!|TypeError|ReferenceError|Cannot find module|heap out of memory")
 
         if [ $EXIT_CODE -ne 0 ]; then
           echo "## ❌ Nx Build Failed" >> $GITHUB_STEP_SUMMARY
           echo "**Project:** $NX_PROJECT" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Error Output" >> $GITHUB_STEP_SUMMARY
+          echo "### Error" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
+          echo "$ERROR_LINE" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Context" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$ERROR_CONTEXT" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
           echo "build-status=failure" >> $GITHUB_OUTPUT
@@ -124,8 +136,6 @@ runs:
           echo "build-status=failure" >> $GITHUB_OUTPUT
           exit 1
         fi
-
-        echo "[INFO] Artifact directory found"
 
         if [ "$NX_PROJECT" = "all" ]; then
           if [ -z "$(ls -A "$ARTIFACT_DIR")" ]; then
