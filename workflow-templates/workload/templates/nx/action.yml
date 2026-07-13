@@ -16,6 +16,10 @@ inputs:
   nx_project:
     description: 'Name of the Nx project to build (use "all" to build everything)'
     required: true
+  enable_nx_cloud:
+    description: 'Enable Nx Cloud (true/false)'
+    required: false
+    default: 'false'
 
 outputs:
   build-status:
@@ -48,8 +52,10 @@ runs:
       env:
         NX_PROJECT: ${{ inputs.nx_project }}
         ENVIRONMENT: ${{ inputs.environment }}
+        NX_CLOUD_ENABLE: ${{ inputs.enable_nx_cloud }}
       run: |
         echo "[INFO] Running Nx build for project: $NX_PROJECT"
+        echo "[INFO] Nx Cloud enabled: $NX_CLOUD_ENABLE"
         BUILD_OUT=$(mktemp)
         BUILD_CMD="npx nx build $NX_PROJECT --configuration=$ENVIRONMENT"
 
