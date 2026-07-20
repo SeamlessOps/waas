@@ -30,7 +30,7 @@ flowchart TB
     RouterOutputs L_RouterOutputs_F_0@--> F["WaaS Deployer"]
     F L_F_G_0@--> G["Smart Notifications"]
     F L_F_N_0@--> N["Metrics Collection"]
-    N L_N_O_0@--> O["WaaS Dashboard<br/>waas.ondgo.ng"]
+    N L_N_O_0@--> O["WaaS Dashboard<br/>waas.mycompany-example.com"]
 
      A:::Sky
      D:::Router
@@ -87,7 +87,7 @@ sequenceDiagram
     
     D->>D: Build, Push & Update GitOps
     D->>M: Deployment Metrics
-    M->>DB: Store Metrics<br/>waas.ondgo.ng
+    M->>DB: Store Metrics<br/>waas.mycompany-example.com
     D->>S: Conditional Notification
     S->>S: Notify Only on Changes
 ```
@@ -119,9 +119,9 @@ jobs:
 
 ### View Deployment Metrics
 
-All deployments automatically feed into the **WaaS Dashboard**:
+All deployments automatically feed into the **WaaS Dashboard** if deployed:
 ```
-📊 Live Dashboard: https://waas.ondgo.ng
+📊 Live Dashboard: https://waas.mycompany-example.com
 ```
 
 ## 📊 Metrics & Observability
@@ -138,7 +138,7 @@ Every deployment automatically collects:
 
 ### Real-time Dashboard Features
 
-Access your deployment metrics at **https://waas.ondgo.ng**:
+Access your deployment metrics at **https://waas.mycompany-example.com**:
 
 - **📈 Live Statistics**: Success rates, average durations, deployment counts
 - **🔍 Advanced Filtering**: By environment, service, status, time range
@@ -202,7 +202,7 @@ Recent Deployments
 ### 4. **Automatic Metrics Collection**
 - **Real-time tracking**: Every deployment automatically recorded
 - **GitOps storage**: Metrics stored in GitOps repository
-- **Dashboard integration**: Live updates to waas.ondgo.ng
+- **Dashboard integration**: Live updates to waas.mycompany-example.com
 - **Zero configuration**: No setup required
 
 ### 5. **Smart Notifications**
@@ -218,7 +218,7 @@ WaaS Deployment → GitOps Repository (metrics/) → WaaS Dashboard
 ```
 
 ### Access Your Data
-- **Live Dashboard**: https://waas.ondgo.ng
+- **Live Dashboard**: https://waas.mycompany-example.com
 - **Raw Metrics**: GitOps repository `metrics/data/deployments.json`
 - **API Access**: REST endpoint for integration
 
@@ -314,7 +314,7 @@ Each run provides detailed insights:
 
 ### Monitor Deployment Health
 ```
-📊 WaaS Dashboard: https://waas.ondgo.ng
+📊 WaaS Dashboard: https://waas.mycompany-example.com
 ```
 
 ### Common Patterns
@@ -352,4 +352,4 @@ Each run provides detailed insights:
 
 ---
 
-**Ready to deploy?** Your metrics will automatically appear at **https://waas.ondgo.ng** 🎉
+**Ready to deploy?** Your metrics will automatically appear at **https://waas.mycompany-example.com** 🎉
