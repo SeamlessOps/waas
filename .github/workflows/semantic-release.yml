@@ -17,7 +17,7 @@ jobs:
       id-token: write  # For GitHub token permissions
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: github.ref_type == 'tag'
         with:
           fetch-depth: 0
