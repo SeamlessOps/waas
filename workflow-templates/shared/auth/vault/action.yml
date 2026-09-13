@@ -16,7 +16,7 @@ runs:
   steps:
     - name: Retrieve Secrets 
       id: secretdata
-      uses: hashicorp/vault-action@v3.4.0
+      uses: hashicorp/vault-action@v4
       with:
         method: jwt
         url: ${{ inputs.vault_addr }}
