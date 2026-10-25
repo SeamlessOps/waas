@@ -101,8 +101,16 @@ runs:
         echo "Running: $PLAN_CMD"
         set +e
         $PLAN_CMD | tee "$PLAN_OUT"
-        PLAN_EXIT_CODE=$?
+        PLAN_EXIT_CODE=${PIPESTATUS[0]}  # terraform's exit code, not tee's
         set -e
+
+        # A failed plan fails the step
+        if [ "$PLAN_EXIT_CODE" -ne 0 ]; then
+          echo "## ❌ Terraform Plan Failed" >> $GITHUB_STEP_SUMMARY
+          echo "terraform plan exited with code $PLAN_EXIT_CODE." >> $GITHUB_STEP_SUMMARY
+          echo "::error::terraform plan failed with exit code $PLAN_EXIT_CODE"
+          exit "$PLAN_EXIT_CODE"
+        fi
 
         echo "plan_file=$PLAN_FILE" >> $GITHUB_OUTPUT
 

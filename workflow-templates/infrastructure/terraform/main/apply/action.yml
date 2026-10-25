@@ -64,7 +64,7 @@ runs:
         echo "Running: $APPLY_CMD"
         set +e
         $APPLY_CMD | tee "$APPLY_OUT"
-        APPLY_EXIT_CODE=$?
+        APPLY_EXIT_CODE=${PIPESTATUS[0]}  # terraform's exit code, not tee's
         set -e
 
         # Detect changes by grepping apply output
@@ -74,6 +74,14 @@ runs:
         else
           echo "📋 Resources were applied/changed"
           echo "no_changes=false" >> $GITHUB_OUTPUT
+        fi
+
+        # A failed apply fails the step (it may have changed some resources before the error)
+        if [ "$APPLY_EXIT_CODE" -ne 0 ]; then
+          echo "## ❌ Terraform Apply Failed" >> $GITHUB_STEP_SUMMARY
+          echo "terraform apply exited with code $APPLY_EXIT_CODE; some resources may have been changed before the error." >> $GITHUB_STEP_SUMMARY
+          echo "::error::terraform apply failed with exit code $APPLY_EXIT_CODE"
+          exit "$APPLY_EXIT_CODE"
         fi
 
     - name: Get Module Name
