@@ -45,6 +45,21 @@ inputs:
     description: 'File to store build error logs on docker build'
     required: false
     default: 'docker-error.log'
+  github_packages:
+    description: >-
+      Give the build read access to GitHub Packages as two build secrets: "github_token" (the token) and
+      "nuget_auth" (NuGet's credential format, "Username=<user>;Password=<token>").
+      A Dockerfile reads them with RUN --mount=type=secret,id=<name>.
+    required: false
+    default: 'false'
+  package_user:
+    description: 'User name for GitHub Packages (any value works with a GITHUB_TOKEN)'
+    required: false
+    default: ''
+  package_token:
+    description: 'Token with read:packages, usually the workflow''s GITHUB_TOKEN'
+    required: false
+    default: ''
 
 outputs:
   status:
@@ -85,9 +100,24 @@ runs:
     - name: Build and Publish Docker image
       id: build-and-publish
       shell: bash
+      env:
+        GITHUB_PACKAGES: ${{ inputs.github_packages }}
+        GITHUB_PACKAGES_TOKEN: ${{ inputs.package_token }}
+        NUGET_AUTH: ${{ inputs.github_packages == 'true' && format('Username={0};Password={1}', inputs.package_user || 'github', inputs.package_token) || '' }}
       run: |
 
         set -euo pipefail
+
+        # Build secrets (never build arguments: those are stored in the image's history)
+        SECRET_ARGS=""
+        if [[ "$GITHUB_PACKAGES" == "true" ]]; then
+          if [[ -z "$GITHUB_PACKAGES_TOKEN" ]]; then
+            echo "[ERROR] - github_packages needs a package token"
+            exit 1
+          fi
+          SECRET_ARGS="--secret id=github_token,env=GITHUB_PACKAGES_TOKEN --secret id=nuget_auth,env=NUGET_AUTH"
+          echo "[INFO] - 🔑 Build secrets: github_token, nuget_auth"
+        fi
 
         # Construct the image name and tag
         IMAGE="${{ inputs.artifact_registry }}/${{ inputs.service }}"
@@ -163,13 +193,13 @@ runs:
           docker buildx build --push --progress=plain \
             -t "$IMAGE:$TAG" \
             -f "${{ inputs.dockerfile }}" \
-            $BUILD_ARGS . 2>&1 | tee "$ERROR_LOG"
+            $BUILD_ARGS $SECRET_ARGS . 2>&1 | tee "$ERROR_LOG"
         else
           echo "[INFO] - Buildx setup failed, using regular Docker build..."
           docker build \
             -t "$IMAGE:$TAG" \
             -f "${{ inputs.dockerfile }}" \
-            $BUILD_ARGS . 2>&1 | tee "$ERROR_LOG"
+            $BUILD_ARGS $SECRET_ARGS . 2>&1 | tee "$ERROR_LOG"
           docker push "$IMAGE:$TAG" 2>&1 | tee -a "$ERROR_LOG"
         fi
 
