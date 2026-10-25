@@ -7,6 +7,22 @@ inputs:
   dotnet_version:
     description: '.NET version'
     default: '9.0.x'
+  github_packages:
+    description: 'Authenticate the NuGet sources in nuget_sources to GitHub Packages with package_token'
+    required: false
+    default: 'false'
+  nuget_sources:
+    description: 'Comma-separated nuget.config source keys that are GitHub Packages feeds, e.g. "myorg"'
+    required: false
+    default: ''
+  package_user:
+    description: 'User name for GitHub Packages (any value works with a GITHUB_TOKEN)'
+    required: false
+    default: ''
+  package_token:
+    description: 'Token with read:packages, usually the workflow''s GITHUB_TOKEN'
+    required: false
+    default: ''
 
 outputs:
   build-status:
@@ -26,9 +42,30 @@ runs:
       id: verify-dotnet-project
       if: always()
       shell: bash
+      env:
+        GITHUB_PACKAGES: ${{ inputs.github_packages }}
+        NUGET_SOURCES: ${{ inputs.nuget_sources }}
+        PACKAGE_USER: ${{ inputs.package_user }}
+        PACKAGE_TOKEN: ${{ inputs.package_token }}
       run: |
         set -euo pipefail
-        
+
+        # Credentials for private GitHub Packages feeds, one variable per nuget.config source key
+        if [[ "$GITHUB_PACKAGES" == "true" ]]; then
+          if [[ -z "$NUGET_SOURCES" || -z "$PACKAGE_TOKEN" ]]; then
+            echo "[ERROR] - github_packages needs nuget_sources and a package token"
+            exit 1
+          fi
+          for source in ${NUGET_SOURCES//,/ }; do
+            if [[ ! "$source" =~ ^[A-Za-z0-9_]+$ ]]; then
+              echo "[ERROR] - NuGet source key '$source' must contain only letters, digits and underscores"
+              exit 1
+            fi
+            export "NuGetPackageSourceCredentials_${source}=Username=${PACKAGE_USER:-github};Password=${PACKAGE_TOKEN}"
+            echo "[INFO] - 🔑 GitHub Packages credentials set for NuGet source '$source'"
+          done
+        fi
+
         PROJECT_DIR="${{ inputs.directory }}"
         EXPECTED_PROJECT_FILE="$PROJECT_DIR/$PROJECT_DIR.csproj"
         

@@ -56,6 +56,16 @@ inputs:
   vault_secret_path:
     description: 'Vault secret path'
     required: true
+  github_packages:
+    description: >-
+      Give the restore and the image build read access to GitHub Packages with the workflow's GITHUB_TOKEN
+      (the caller grants "packages: read"). The image build gets the build secrets "github_token" and "nuget_auth".
+    required: false
+    default: 'false'
+  nuget_sources:
+    description: 'Comma-separated nuget.config source keys that are GitHub Packages feeds (with github_packages)'
+    required: false
+    default: ''
 
 outputs:
   duration:
@@ -148,6 +158,10 @@ runs:
       with:
         directory: ${{ inputs.directory }}
         dotnet_version: ${{ inputs.dotnet_version }}
+        github_packages: ${{ inputs.github_packages }}
+        nuget_sources: ${{ inputs.nuget_sources }}
+        package_user: ${{ github.actor }}
+        package_token: ${{ github.token }}
 
     - name: Build Nx Project
       id: build-nx
@@ -186,6 +200,9 @@ runs:
         nx_project: ${{ inputs.nx_project }}
         project_type: ${{ inputs.project_type }}
         service: ${{ inputs.service }}
+        github_packages: ${{ inputs.github_packages }}
+        package_user: ${{ github.actor }}
+        package_token: ${{ github.token }}
 
     - name: Calculate duration
       id: calculate-duration
