@@ -15,6 +15,10 @@ inputs:
     description: 'Path to Dockerfile'
     required: false
     default: 'Dockerfile'
+  docker_target:
+    description: 'Dockerfile stage to build (--target). Empty builds the last stage'
+    required: false
+    default: ''
   project_type:
     description: 'Project type'
     required: false
@@ -193,6 +197,7 @@ runs:
         build_configuration: ${{ inputs.build_configuration }}
         directory: ${{ inputs.directory }}
         dockerfile: ${{ inputs.dockerfile }}
+        docker_target: ${{ inputs.docker_target }}
         environment: ${{ inputs.environment }}
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}

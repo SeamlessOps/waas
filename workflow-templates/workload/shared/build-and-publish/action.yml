@@ -24,6 +24,10 @@ inputs:
   dockerfile:
     description: 'Path to Dockerfile'
     required: true
+  docker_target:
+    description: 'Dockerfile stage to build (--target). Empty builds the last stage'
+    required: false
+    default: ''
   environment:
     description: 'Environment to update (development, staging, production)'
     required: true
@@ -153,6 +157,12 @@ runs:
           echo "---------------------------------"
           echo "::BUILD_CONFIGURATION::${{ inputs.build_configuration }}"
           echo "---------------------------------"
+        fi
+
+        # Build a named stage of a multi-stage Dockerfile, e.g. the API of a
+        # Dockerfile that also has a CLI stage
+        if [[ -n "${{ inputs.docker_target }}" ]]; then
+          BUILD_ARGS="$BUILD_ARGS --target ${{ inputs.docker_target }}"
         fi
 
         # Add SERVICE_DIR if provided
