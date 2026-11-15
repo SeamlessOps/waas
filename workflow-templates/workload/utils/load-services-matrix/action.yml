@@ -413,6 +413,13 @@ runs:
             exit 1
           fi
         fi
+
+        # A repository's defaults (the file's "repositories" block, by each
+        # entry's "repository") under each of its entries: the entry wins, and
+        # objects such as "version" merge key by key.
+        REPOSITORIES=$(jq -c '.repositories // {}' "$SERVICES_FILE")
+        ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --argjson repos "$REPOSITORIES" \
+          'map((($repos[.repository // ""] // {}) * .))')
         
         # Validate that services array is not empty
         SERVICE_COUNT=$(echo "$ALL_SERVICES" | jq length)
