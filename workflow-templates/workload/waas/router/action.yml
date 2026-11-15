@@ -60,6 +60,11 @@ runs:
       env:
         PRODUCTION_CONFIG: Production
         STAGING_CONFIG: Release
+        # The services JSON goes through the environment, never into the
+        # script's text: a quote in any field (a note's apostrophe) would end
+        # the shell string and run the rest as commands.
+        STAGING_SERVICES: ${{ inputs.staging_services }}
+        PRODUCTION_SERVICES: ${{ inputs.production_services }}
       run: |
         # Determine environment based on branch
         case "${GITHUB_REF##*/}" in
@@ -67,13 +72,13 @@ runs:
             ENVIRONMENT_CONFIG="$STAGING_CONFIG"
             ENVIRONMENT_DOMAIN="${{ inputs.staging_domain }}"
             ENVIRONMENT_NAME="${{ inputs.staging_env }}"
-            SERVICES_JSON='${{ inputs.staging_services }}'
+            SERVICES_JSON="$STAGING_SERVICES"
             ;;
           "main")
             ENVIRONMENT_CONFIG="$PRODUCTION_CONFIG"
             ENVIRONMENT_DOMAIN="${{ inputs.production_domain }}"
             ENVIRONMENT_NAME="${{ inputs.production_env }}"
-            SERVICES_JSON='${{ inputs.production_services }}'
+            SERVICES_JSON="$PRODUCTION_SERVICES"
             ;;
           *)
             echo "❌ Unsupported branch: ${GITHUB_REF##*/}"
