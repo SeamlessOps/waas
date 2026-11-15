@@ -13,11 +13,12 @@ inputs:
     required: false
   catalog_file:
     description: >-
-      Shared services file for polyrepos, in services_dir. A repository without its own services file is looked up
-      here: its entry is the one whose "repository" is the repository's name (or whose "name" is the service input),
-      and the entry's "name" is what it deploys as. A repository found here deploys as a polyrepo.
+      Shared services file, in services_dir. A repository without its own services file is looked up here: its
+      entries are those whose "repository" is the repository's name (or, when none is, the entry whose "name" is
+      the service input). One entry deploys as a polyrepo under the entry's "name"; several deploy as a monorepo.
+      A service input naming one of the repository's entries picks that one.
     required: false
-    default: 'polyrepos.json'
+    default: 'services.json'
   repository:
     description: 'The repository name the catalog is searched by'
     required: false
@@ -55,10 +56,10 @@ inputs:
 
 outputs:
   regular-service:
-    description: "Regular service name: the catalog entry's name when the repository is in the catalog"
+    description: "Regular service name: the catalog entry's name when the repository has one entry there"
     value: ${{ steps.load-services.outputs.service || steps.process-repo-type.outputs.service }}
   monorepo:
-    description: 'Whether the repository deploys as a monorepo: false for one found in the catalog'
+    description: 'Whether the repository deploys as a monorepo: from its number of entries when found in the catalog'
     value: ${{ steps.load-services.outputs.monorepo || inputs.monorepo }}
   all-services:
     description: 'All services as JSON matrix'
@@ -246,11 +247,11 @@ runs:
         echo "[INFO] - 📝 File: ${{ inputs.services_file }}"
 
         if [ ! -f "$SERVICES_FILE" ]; then
-          # A repository without a file of its own: its entry in the catalog,
-          # by repository name, or by service name when the caller sets one.
+          # A repository without a file of its own: its entries in the catalog,
+          # by repository name, else the entry named by the service input.
           if [ -f "$CATALOG_FILE" ] && jq -e --arg repo "$REPOSITORY" --arg service "$SERVICE" \
               '[.services[]? | select(.repository == $repo or .name == $service)] | length > 0' "$CATALOG_FILE" > /dev/null 2>&1; then
-            echo "[INFO] - No ${{ inputs.services_file }}: $REPOSITORY's entry in ${{ inputs.catalog_file }} (a polyrepo)"
+            echo "[INFO] - No ${{ inputs.services_file }}: $REPOSITORY's entries in ${{ inputs.catalog_file }}"
             SERVICES_FILE="$CATALOG_FILE"
             MONOREPO=false
             FROM_CATALOG=true
@@ -388,10 +389,20 @@ runs:
         # service, so only the entry named after it is deployed.
         ALL_SERVICES=$(jq -c '.services' "$SERVICES_FILE")
         if [[ "$FROM_CATALOG" == "true" ]]; then
-          # The service named by the caller, else the repository's entry; one only.
-          ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg repo "$REPOSITORY" --arg service "$SERVICE" \
-            '([.[] | select(.name == $service)] | if length > 0 then . else null end) // [.[] | select(.repository == $repo)] | .[:1]')
-          SERVICE=$(echo "$ALL_SERVICES" | jq -r '.[0].name')
+          # The repository's entries (the one the service input names, if it
+          # names one), else the entry the service input names. One entry is a
+          # polyrepo deploying under its name; several are a monorepo.
+          ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg repo "$REPOSITORY" --arg service "$SERVICE" '
+            [.[] | select(.repository == $repo)] as $own
+            | if ($own | length) > 0
+              then ([$own[] | select(.name == $service)] | if length > 0 then . else $own end)
+              else [.[] | select(.name == $service)][:1]
+              end')
+          if [[ "$(echo "$ALL_SERVICES" | jq length)" -gt 1 ]]; then
+            MONOREPO=true
+          else
+            SERVICE=$(echo "$ALL_SERVICES" | jq -r '.[0].name')
+          fi
         elif [[ "$MONOREPO" != "true" ]]; then
           ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg service "$SERVICE" '[.[] | select(.name == $service)]')
           if [[ "$(echo "$ALL_SERVICES" | jq length)" -eq 0 ]]; then
