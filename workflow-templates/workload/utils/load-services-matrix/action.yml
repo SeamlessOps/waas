@@ -11,6 +11,18 @@ inputs:
   services_dir:
     description: 'Directory containing service files'
     required: false
+  catalog_file:
+    description: >-
+      Shared services file, in services_dir. A repository without its own services file is looked up here: its
+      entries are those whose "repository" is the repository's name (or, when none is, the entry whose "name" is
+      the service input). One entry deploys as a polyrepo under the entry's "name"; several deploy as a monorepo.
+      A service input naming one of the repository's entries picks that one.
+    required: false
+    default: 'services.json'
+  repository:
+    description: 'The repository name the catalog is searched by'
+    required: false
+    default: ${{ github.event.repository.name }}
   load_default:
     description: 'Decide to load from default service_dir or custom one'
     required: false
@@ -44,8 +56,11 @@ inputs:
 
 outputs:
   regular-service:
-    description: 'Regular service name'
-    value: ${{ steps.process-repo-type.outputs.service }}
+    description: "Regular service name: the catalog entry's name when the repository has one entry there"
+    value: ${{ steps.load-services.outputs.service || steps.process-repo-type.outputs.service }}
+  monorepo:
+    description: 'Whether the repository deploys as a monorepo: from its number of entries when found in the catalog'
+    value: ${{ steps.load-services.outputs.monorepo || inputs.monorepo }}
   all-services:
     description: 'All services as JSON matrix'
     value: ${{ steps.load-services.outputs.all-services }}
@@ -204,10 +219,17 @@ runs:
       shell: bash
       env:
         SERVICES_FILE: "${{ inputs.services_dir }}/${{ inputs.services_file }}"
+        CATALOG_FILE: "${{ inputs.services_dir }}/${{ inputs.catalog_file }}"
+        REPOSITORY: ${{ inputs.repository }}
         MONOREPO: ${{ inputs.monorepo }}
         LOAD: ${{ steps.process-repo-type.outputs.load }}
         SERVICE: ${{ inputs.service }}
       run: |
+        # What the router and the deployer need back: whether this deploys as a
+        # monorepo, and the polyrepo's service name (the catalog entry's).
+        FROM_CATALOG=false
+        trap 'echo "monorepo=$MONOREPO" >> $GITHUB_OUTPUT; [[ "$MONOREPO" == "true" ]] || echo "service=$SERVICE" >> $GITHUB_OUTPUT' EXIT
+
         # A polyrepo without a services file deploys by name: one service,
         # every environment, the build options from the caller's inputs.
         name_only() {
@@ -225,13 +247,22 @@ runs:
         echo "[INFO] - 📝 File: ${{ inputs.services_file }}"
 
         if [ ! -f "$SERVICES_FILE" ]; then
-          if [[ "$MONOREPO" != "true" ]]; then
+          # A repository without a file of its own: its entries in the catalog,
+          # by repository name, else the entry named by the service input.
+          if [ -f "$CATALOG_FILE" ] && jq -e --arg repo "$REPOSITORY" --arg service "$SERVICE" \
+              '[.services[]? | select(.repository == $repo or .name == $service)] | length > 0' "$CATALOG_FILE" > /dev/null 2>&1; then
+            echo "[INFO] - No ${{ inputs.services_file }}: $REPOSITORY's entries in ${{ inputs.catalog_file }}"
+            SERVICES_FILE="$CATALOG_FILE"
+            MONOREPO=false
+            FROM_CATALOG=true
+          elif [[ "$MONOREPO" != "true" ]]; then
             echo "[INFO] - No services file for $SERVICE: deploying by name"
             name_only
             exit 0
+          else
+            echo "❌ Services configuration file not found: $SERVICES_FILE (and $REPOSITORY is not in ${{ inputs.catalog_file }})"
+            exit 1
           fi
-          echo "❌ Services configuration file not found: $SERVICES_FILE"
-          exit 1
         fi
 
         echo "[INFO] - 📥 Reading services configuration from $SERVICES_FILE"
@@ -357,7 +388,22 @@ runs:
         # Load all services. A polyrepo's file describes the repository's one
         # service, so only the entry named after it is deployed.
         ALL_SERVICES=$(jq -c '.services' "$SERVICES_FILE")
-        if [[ "$MONOREPO" != "true" ]]; then
+        if [[ "$FROM_CATALOG" == "true" ]]; then
+          # The repository's entries (the one the service input names, if it
+          # names one), else the entry the service input names. One entry is a
+          # polyrepo deploying under its name; several are a monorepo.
+          ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg repo "$REPOSITORY" --arg service "$SERVICE" '
+            [.[] | select(.repository == $repo)] as $own
+            | if ($own | length) > 0
+              then ([$own[] | select(.name == $service)] | if length > 0 then . else $own end)
+              else [.[] | select(.name == $service)][:1]
+              end')
+          if [[ "$(echo "$ALL_SERVICES" | jq length)" -gt 1 ]]; then
+            MONOREPO=true
+          else
+            SERVICE=$(echo "$ALL_SERVICES" | jq -r '.[0].name')
+          fi
+        elif [[ "$MONOREPO" != "true" ]]; then
           ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg service "$SERVICE" '[.[] | select(.name == $service)]')
           if [[ "$(echo "$ALL_SERVICES" | jq length)" -eq 0 ]]; then
             NAMES=$(jq -r '[.services[].name] | join(", ")' "$SERVICES_FILE")
