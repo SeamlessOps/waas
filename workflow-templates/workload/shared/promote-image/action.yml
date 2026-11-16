@@ -1,0 +1,136 @@
+name: 'Promote Image'
+description: >-
+  Promote the image another environment runs (staging) to this one instead of building it again: read that
+  environment's tag from the GitOps values, check that its commit holds exactly the code being deployed, copy the
+  image to this service's name (no rebuild, no layer upload) and write the tag. Outputs promoted=false when it
+  can't (no tag there, or the code differs), so the caller builds as usual.
+
+inputs:
+  service:
+    description: 'Service values key to update (e.g. api-ondgo-ng); also its image name'
+    required: true
+  source_service:
+    description: 'Values key, and image name, of the service in the source environment (e.g. api-ondgo-dev)'
+    required: true
+  source_environment:
+    description: 'Environment whose image is promoted (e.g. staging)'
+    required: true
+  environment:
+    description: 'Environment to update (e.g. production)'
+    required: true
+  artifact_registry:
+    description: 'Artifact Registry repository holding both images'
+    required: true
+  git_token:
+    description: 'Token to read and update the GitOps repository'
+    required: true
+  gitops_repo:
+    description: 'GitOps repository'
+    required: false
+    default: 'SeamlessOps/products.git'
+  git_ref:
+    description: 'GitOps branch'
+    required: false
+    default: 'main'
+  github_token:
+    description: "Token to compare commits in the calling repository (the workflow's GITHUB_TOKEN)"
+    required: true
+
+outputs:
+  promoted:
+    description: "'true' when the image was promoted and the tag written; 'false' when the caller should build"
+    value: ${{ steps.decide.outputs.promote == 'true' && steps.update-gitops.outcome == 'success' && 'true' || 'false' }}
+  image_tag:
+    description: 'The promoted tag'
+    value: ${{ steps.decide.outputs.tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout the source environment's values
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.git_token }}
+        ref: ${{ inputs.git_ref }}
+        path: .promote-gitops
+        sparse-checkout: environment/${{ inputs.source_environment }}
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Install yq
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v yq >/dev/null || {
+          sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/bin/yq
+        }
+
+    - name: Decide whether to promote
+      id: decide
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        SOURCE_SERVICE: ${{ inputs.source_service }}
+        SOURCE_ENV: ${{ inputs.source_environment }}
+      run: |
+        set -euo pipefail
+        values=".promote-gitops/environment/$SOURCE_ENV/values-$SOURCE_ENV.yaml"
+        tag=$(yq eval ".services.\"$SOURCE_SERVICE\".tag // \"\"" "$values")
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        if [[ ! "$tag" =~ -sha-([0-9a-f]{7,40})$ ]]; then
+          echo "[INFO] - No promotable tag for $SOURCE_SERVICE in $SOURCE_ENV ('$tag'): building"
+          echo "promote=false" >> "$GITHUB_OUTPUT"; exit 0
+        fi
+        sha="${BASH_REMATCH[1]}"
+        # Same code: comparing the tag's commit with the one being deployed lists no changed file. Holds for merge
+        # and squash merges alike; a newer dev (staging ahead of what was merged) shows files and builds instead.
+        if ! files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$GITHUB_SHA" --jq '.files | length' 2>/dev/null); then
+          echo "[INFO] - Can't compare $sha with $GITHUB_SHA: building"
+          echo "promote=false" >> "$GITHUB_OUTPUT"; exit 0
+        fi
+        if [[ "$files" != "0" ]]; then
+          echo "[INFO] - $SOURCE_ENV's $tag differs from $GITHUB_SHA ($files files): building"
+          echo "promote=false" >> "$GITHUB_OUTPUT"; exit 0
+        fi
+        echo "[INFO] - $SOURCE_ENV's $tag is the code being deployed: promoting"
+        echo "promote=true" >> "$GITHUB_OUTPUT"
+
+    - name: Authenticate with Google Cloud
+      if: steps.decide.outputs.promote == 'true'
+      uses: SeamlessOps/waas/workflow-templates/shared/auth/gcloud@main
+
+    - name: Set up Docker Buildx
+      if: steps.decide.outputs.promote == 'true'
+      uses: docker/setup-buildx-action@v4.0.0
+
+    - name: Copy the image
+      id: copy
+      if: steps.decide.outputs.promote == 'true'
+      continue-on-error: true   # a failed copy leaves promoted=false: the caller builds instead
+      shell: bash
+      env:
+        SRC: ${{ inputs.artifact_registry }}/${{ inputs.source_service }}:${{ steps.decide.outputs.tag }}
+        DST: ${{ inputs.artifact_registry }}/${{ inputs.service }}:${{ steps.decide.outputs.tag }}
+      run: |
+        set -euo pipefail
+        # A manifest copy inside one registry: the layers are mounted, not pulled and pushed again
+        docker buildx imagetools create --tag "$DST" "$SRC"
+        echo "[INFO] - ✅ Promoted $SRC -> $DST"
+        {
+          echo "## 🚀 Promoted, not rebuilt"
+          echo "**$SRC** → **$DST**"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Update GitOps Values
+      id: update-gitops
+      if: steps.copy.outcome == 'success'
+      uses: SeamlessOps/waas/workflow-templates/workload/shared/gitops-repo/update-image-tag@main
+      with:
+        service: ${{ inputs.service }}
+        image_tag: ${{ steps.decide.outputs.tag }}
+        environment: ${{ inputs.environment }}
+        git_token: ${{ inputs.git_token }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        git_ref: ${{ inputs.git_ref }}

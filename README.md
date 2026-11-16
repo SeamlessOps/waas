@@ -177,6 +177,7 @@ Recent Deployments
 | `production_env` | ❌ | `production` | Production environment name |
 | `staging_domain` | ❌ | `ondgo-dev` | Staging domain identifier |
 | `production_domain` | ❌ | `ondgo-ng` | Production domain identifier |
+| `promote` | ❌ | `true` | Promote staging's image to production instead of rebuilding (see How It Works) |
 
 ## 🎯 How It Works
 
@@ -198,6 +199,10 @@ Recent Deployments
 - **Monorepo**: Matrix deployment for multiple services in parallel
 - **Polyrepo**: Focused single-service deployment
 - **Conditional execution**: Skips deployments when no changes detected
+- **Promotion to production**: a merge into `main` reuses staging's image instead of building it again, when
+  staging's tag points at the same code (the compare between its commit and the merged one lists no file). The image is
+  copied to the production name and production's tag is written; otherwise it builds as before. Every project type
+  promotes, since images take their settings at runtime; a service can opt out with `"promote": false`
 
 ### 4. **Automatic Metrics Collection**
 - **Real-time tracking**: Every deployment automatically recorded
