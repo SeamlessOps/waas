@@ -76,8 +76,17 @@ runs:
         SOURCE_ENV: ${{ inputs.source_environment }}
       run: |
         set -euo pipefail
-        values=".promote-gitops/environment/$SOURCE_ENV/values-$SOURCE_ENV.yaml"
-        tag=$(yq eval ".services.\"$SOURCE_SERVICE\".tag // \"\"" "$values")
+        # The file under environment/$SOURCE_ENV that holds the source service (one per app); none or several: build
+        values=""
+        for f in .promote-gitops/environment/"$SOURCE_ENV"/*.yaml; do
+          [ -f "$f" ] || continue
+          if yq -e ".services | has(\"$SOURCE_SERVICE\")" "$f" >/dev/null 2>&1; then
+            if [ -n "$values" ]; then echo "[INFO] - $SOURCE_SERVICE is in several files under $SOURCE_ENV: building"; values=""; break; fi
+            values="$f"
+          fi
+        done
+        tag=""
+        [ -n "$values" ] && tag=$(yq eval ".services.\"$SOURCE_SERVICE\".tag // \"\"" "$values")
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
         if [[ ! "$tag" =~ -sha-([0-9a-f]{7,40})$ ]]; then
           echo "[INFO] - No promotable tag for $SOURCE_SERVICE in $SOURCE_ENV ('$tag'): building"

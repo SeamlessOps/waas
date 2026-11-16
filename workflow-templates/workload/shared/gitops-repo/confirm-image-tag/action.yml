@@ -36,7 +36,6 @@ runs:
       id: values
       shell: bash
       run: |
-        echo "values_file=environment/${{ inputs.environment }}/values-${{ inputs.environment }}.yaml" >> $GITHUB_OUTPUT
         echo "values_dir=environment/${{ inputs.environment }}" >> $GITHUB_OUTPUT
 
     - name: Checkout GitOps Repository
@@ -49,18 +48,6 @@ runs:
         sparse-checkout-cone-mode: false
         fetch-depth: 1
 
-    - name: Validate values file exists
-      shell: bash
-      run: |
-        values_file="${{ steps.values.outputs.values_file }}"
-
-        if [ ! -f "$values_file" ]; then
-          echo "::error::Values file '$values_file' not found in repository"
-          echo "Please ensure the file exists in the GitOps repository."
-          exit 1
-        fi
-        echo "✅ Values file found: $values_file"
-
     - name: Install yq
       shell: bash
       run: |
@@ -68,11 +55,28 @@ runs:
         sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
         sudo chmod +x /usr/bin/yq
 
+    - name: Find the values file
+      id: find
+      shell: bash
+      run: |
+        # The one file under environment/<env> that holds the service (one file per app, e.g. backend.yaml)
+        matches=()
+        for f in ${{ steps.values.outputs.values_dir }}/*.yaml; do
+          [ -f "$f" ] || continue
+          if yq -e '.services | has("${{ inputs.service }}")' "$f" >/dev/null 2>&1; then matches+=("$f"); fi
+        done
+        if [ "${#matches[@]}" -ne 1 ]; then
+          echo "::error::Service ${{ inputs.service }} must be in exactly one file under ${{ steps.values.outputs.values_dir }}, found ${#matches[@]}: ${matches[*]:-none}"
+          exit 1
+        fi
+        echo "values_file=${matches[0]}" >> $GITHUB_OUTPUT
+        echo "✅ Values file for ${{ inputs.service }}: ${matches[0]}"
+
     - name: Confirm if Image Tag Needs Update
       id: confirm-image-tag
       shell: bash
       run: |
-        values_file="${{ steps.values.outputs.values_file }}"
+        values_file="${{ steps.find.outputs.values_file }}"
         current_tag=$(yq eval ".services.${{ inputs.service }}.tag" "$values_file")
 
         # Debug tags
