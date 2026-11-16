@@ -27,7 +27,7 @@ runs:
         # https://aquasecurity.github.io/tfsec/v0.63.1/getting-started/usage/
 
     - name: Get Module Name
-      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      uses: rollwright/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
       with:
         working_directory: ${{ inputs.working_directory }}
 

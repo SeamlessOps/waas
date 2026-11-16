@@ -31,7 +31,7 @@ runs:
 
     - name: Authenticate with Vault and GCloud
       id: auth
-      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/auth@main
+      uses: rollwright/waas/workflow-templates/infrastructure/terraform/shared/auth@main
       with:
         vault_addr: ${{ inputs.vault_addr }}
         vault_role: ${{ inputs.vault_role }}

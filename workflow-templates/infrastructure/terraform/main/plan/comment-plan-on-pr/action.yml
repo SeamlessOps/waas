@@ -34,7 +34,7 @@ runs:
 
     - name: Get Module Name
       id: get-module-name
-      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      uses: rollwright/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
       with:
         working_directory: ${{ inputs.working_directory }}
 

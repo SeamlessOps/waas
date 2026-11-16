@@ -8,7 +8,7 @@ on:
 
 jobs:
   gitops:
-    uses: SeamlessOps/waas/.github/workflows/waas.yml@v1
+    uses: rollwright/waas/.github/workflows/waas.yml@v1
     with:
       project_type: nx        # Other projects: dotnet (.net), java, node etc
     permissions:

@@ -46,7 +46,7 @@ inputs:
   gitops_repo:
     description: 'GitOps repository URL'
     required: false
-    default: 'SeamlessOps/products.git'
+    default: 'rollwright/products.git'
   git_ref:
     description: 'The GitOps branch to use'
     required: false
@@ -107,7 +107,7 @@ runs:
   steps:
     - name: Authenticate with Vault and Retrieve Secrets 
       id: secretdata
-      uses: SeamlessOps/waas/workflow-templates/shared/auth/vault@main
+      uses: rollwright/waas/workflow-templates/shared/auth/vault@main
       with:
         vault_addr: ${{ inputs.vault_addr }}
         vault_role: ${{ inputs.vault_role }}
@@ -116,7 +116,7 @@ runs:
     - name: Promote the source environment's image
       id: promote
       if: inputs.promote == 'true' && inputs.promote_from_service != '' && inputs.promote_from_environment != ''
-      uses: SeamlessOps/waas/workflow-templates/workload/shared/promote-image@main
+      uses: rollwright/waas/workflow-templates/workload/shared/promote-image@main
       with:
         service: ${{ inputs.service }}
         source_service: ${{ inputs.promote_from_service }}
@@ -131,7 +131,7 @@ runs:
     - name: Confirm if Image Tag Needs Update
       id: confirm-image-tag
       if: steps.promote.outputs.promoted != 'true'
-      uses: SeamlessOps/waas/workflow-templates/workload/shared/gitops-repo/confirm-image-tag@main
+      uses: rollwright/waas/workflow-templates/workload/shared/gitops-repo/confirm-image-tag@main
       with:
         service: ${{ inputs.service }}
         environment: ${{ inputs.environment }}
@@ -191,7 +191,7 @@ runs:
       if: >
         steps.validate-project-type.outputs.project-type == 'dotnet' || 
         steps.validate-project-type.outputs.project-type == '.net'
-      uses: SeamlessOps/waas/workflow-templates/workload/templates/dotnet@main
+      uses: rollwright/waas/workflow-templates/workload/templates/dotnet@main
       with:
         directory: ${{ inputs.directory }}
         dotnet_version: ${{ inputs.dotnet_version }}
@@ -203,7 +203,7 @@ runs:
     - name: Build Nx Project
       id: build-nx
       if: steps.validate-project-type.outputs.project-type == 'nx'
-      uses: SeamlessOps/waas/workflow-templates/workload/templates/nx@main
+      uses: rollwright/waas/workflow-templates/workload/templates/nx@main
       with:
         nx_project: ${{ inputs.nx_project }}
         environment: ${{ inputs.environment }}
@@ -224,7 +224,7 @@ runs:
       if: >
         steps.confirm-image-tag.outputs.no-changes!= 'true' && 
         steps.validate-project-type.outputs.valid-project-type == 'true'
-      uses: SeamlessOps/waas/workflow-templates/workload/shared/build-and-publish@main
+      uses: rollwright/waas/workflow-templates/workload/shared/build-and-publish@main
       with:
         artifact_registry: ${{ env.ARTIFACT_REGISTRY }}
         build_configuration: ${{ inputs.build_configuration }}
@@ -296,7 +296,7 @@ runs:
         always() &&
         steps.confirm-image-tag.outputs.no-changes!= 'true' && 
         steps.validate-project-type.outputs.valid-project-type == 'true'
-      uses: SeamlessOps/waas/workflow-templates/workload/utils/collect-metrics@main
+      uses: rollwright/waas/workflow-templates/workload/utils/collect-metrics@main
       with:
         service: ${{ inputs.service }}
         service_type: ${{ inputs.service_type }}

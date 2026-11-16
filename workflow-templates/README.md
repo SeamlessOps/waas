@@ -126,7 +126,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy to staging
-        uses: SeamlessOps/waas/workflow-templates/workload/templates/general-purpose@main
+        uses: rollwright/waas/workflow-templates/workload/templates/general-purpose@main
         with:
           service: identity-ondgo-ng
           environment: staging

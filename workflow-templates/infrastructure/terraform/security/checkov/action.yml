@@ -81,7 +81,7 @@ runs:
         repo_root_for_plan_enrichment: ${{ !inputs.module_targets && inputs.working_directory || '' }}
 
     - name: Get Module Name
-      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      uses: rollwright/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
       with:
         working_directory: ${{ inputs.working_directory }}
         

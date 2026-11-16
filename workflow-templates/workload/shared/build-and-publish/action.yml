@@ -40,7 +40,7 @@ inputs:
   gitops_repo:
     description: 'GitOps repository URL'
     required: false
-    default: 'SeamlessOps/products.git'
+    default: 'rollwright/products.git'
   git_ref:
     description: 'The GitOps branch to use'
     required: false
@@ -91,7 +91,7 @@ runs:
         sudo chmod +x /usr/bin/yq
 
     - name: Authenticate with Google Cloud
-      uses: SeamlessOps/waas/workflow-templates/shared/auth/gcloud@main
+      uses: rollwright/waas/workflow-templates/shared/auth/gcloud@main
    
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4.0.0
@@ -245,7 +245,7 @@ runs:
     - name: Update GitOps Values
       id: update-gitops
       if: success()
-      uses: SeamlessOps/waas/workflow-templates/workload/shared/gitops-repo/update-image-tag@main
+      uses: rollwright/waas/workflow-templates/workload/shared/gitops-repo/update-image-tag@main
       with:
         service: ${{ inputs.service }}
         image_tag: ${{ inputs.image_tag }}
