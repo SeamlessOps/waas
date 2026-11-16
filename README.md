@@ -108,7 +108,7 @@ on:
 
 jobs:
   deploy:
-    uses: SeamlessOps/waas/.github/workflows/waas.yml@v1
+    uses: rollwright/waas/.github/workflows/waas.yml@v1
     with:
       project_type: dotnet  # or 'nx', 'python'
     permissions:
@@ -287,7 +287,7 @@ inputs:
 ```yaml
 jobs:
   deploy:
-    uses: SeamlessOps/waas/.github/workflows/waas.yml@v2
+    uses: rollwright/waas/.github/workflows/waas.yml@v2
     with:
       project_type: python
       python_version: "3.11"

@@ -1,4 +1,4 @@
 # CODEOWNERS for waas
 # Assigns ownership for code review in the waas repository.
 
-* @SeamlessOps/platform-engineering
+* @rollwright/platform-engineering

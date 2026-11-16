@@ -65,7 +65,7 @@ runs:
       uses: actions/checkout@v5
 
     - name: Setup Terraform
-      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/main/setup@main
+      uses: rollwright/waas/workflow-templates/infrastructure/terraform/main/setup@main
       with:
         vault_addr: ${{ inputs.vault_addr }}
         vault_role: ${{ inputs.vault_role }}
@@ -197,7 +197,7 @@ runs:
         echo "markdown_plan_file=${MARKDOWN_SUMMARY_FILE}" >> $GITHUB_OUTPUT
 
     - name: Get Module Name
-      uses: SeamlessOps/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
+      uses: rollwright/waas/workflow-templates/infrastructure/terraform/shared/utils/get-module-name@main
       with:
         working_directory: ${{ inputs.working_directory }}
 

@@ -30,7 +30,7 @@ inputs:
   gitops_repo:
     description: 'GitOps repository URL'
     required: false
-    default: 'SeamlessOps/products.git'
+    default: 'rollwright/products.git'
   git_ref:
     description: 'The GitOps branch to use'
     required: false
@@ -134,7 +134,7 @@ runs:
           echo "- Provide vault credentials as inputs" >> $GITHUB_STEP_SUMMARY
           echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
           echo '```yaml' >> $GITHUB_STEP_SUMMARY
-          echo "uses: SeamlessOps/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
+          echo "uses: rollwright/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  vault_addr: '<VAULT_ADDR>'" >> $GITHUB_STEP_SUMMARY
           echo "  vault_role: '<VAULT_ROLE>'" >> $GITHUB_STEP_SUMMARY
@@ -148,7 +148,7 @@ runs:
           echo "- Set \`load_default\` to false and provide your own \`services_dir\` and \`services_file\`" >> $GITHUB_STEP_SUMMARY
           echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
           echo '```yaml' >> $GITHUB_STEP_SUMMARY
-          echo "uses: SeamlessOps/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
+          echo "uses: rollwright/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  load_default: false" >> $GITHUB_STEP_SUMMARY
           echo "  services_dir: '<path-to-services-dir>'" >> $GITHUB_STEP_SUMMARY
@@ -182,7 +182,7 @@ runs:
     - name: Authenticate with Vault and Retrieve Secrets
       id: secretdata
       if: inputs.load_default == 'true' && steps.process-repo-type.outputs.load == 'true'
-      uses: SeamlessOps/waas/workflow-templates/shared/auth/vault@main
+      uses: rollwright/waas/workflow-templates/shared/auth/vault@main
       with:
         vault_addr: ${{ inputs.vault_addr }}
         vault_role: ${{ inputs.vault_role }}

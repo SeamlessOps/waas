@@ -18,7 +18,7 @@ inputs:
   gitops_repo:
     description: 'GitOps repository URL'
     required: false
-    default: 'SeamlessOps/products.git'
+    default: 'rollwright/products.git'
   git_ref:
     description: 'The GitOps branch to use'
     required: false
