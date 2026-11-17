@@ -6,6 +6,7 @@ on:
       - 'go.mod'
       - 'cmd/**'
       - 'internal/**'
+      - 'Makefile'
       - '.github/workflows/go.yml'
   push:
     branches: [main]
@@ -22,9 +23,5 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
-      - name: Vet
-        run: go vet ./...
-      - name: Test
-        run: go test ./...
+      - name: Check
+        run: make check

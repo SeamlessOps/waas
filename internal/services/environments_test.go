@@ -121,14 +121,73 @@ func TestResolve_EnvironmentsFromTheFile(t *testing.T) {
 	for env, list := range m.Environments {
 		got[env] = names(list)
 	}
-	want := map[string][]string{"uat": {"admin"}, "staging": {"admin"}, "production": {"web"}}
-	// web has no environments of its own: it takes the file's defaults,
-	// staging and production; admin lists uat and staging.
-	want["staging"] = []string{"web", "admin"}
+	// web has no environments of its own: it deploys to every environment the
+	// file declares. admin lists uat and staging.
+	want := map[string][]string{"uat": {"web", "admin"}, "staging": {"web", "admin"}, "production": {"web"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("services per environment = %v, want %v", got, want)
 	}
 	if len(m.Routes) != 3 || m.Routes[0].Branch != "develop" {
 		t.Errorf("routes = %+v", m.Routes)
+	}
+}
+
+func TestPlanPush(t *testing.T) {
+	dir := write(t, map[string]string{"services.json": withEnvironments, "plain.json": `{"services": [{"name": "a"}]}`})
+	cat := filepath.Join(dir, "services.json")
+
+	p, err := PlanPush(Request{File: filepath.Join(dir, "none.json"), Catalog: cat, Repository: "shop", Service: "shop"}, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Deploy || p.Name != "production" || p.Domain != "shop" || p.PromoteFrom.Name != "staging" || !p.Monorepo {
+		t.Errorf("plan = %+v", p)
+	}
+	if got := names(p.Services); !reflect.DeepEqual(got, []string{"web"}) {
+		t.Errorf("services = %v, want [web]", got)
+	}
+
+	// legacy's own branches.
+	p, _ = PlanPush(Request{File: filepath.Join(dir, "none.json"), Catalog: cat, Repository: "legacy", Service: "legacy"}, "master")
+	if !p.Deploy || p.Name != "production" || p.Service != "old" {
+		t.Errorf("legacy on master = %+v", p)
+	}
+
+	// A branch no environment takes.
+	p, _ = PlanPush(Request{File: filepath.Join(dir, "none.json"), Catalog: cat, Repository: "shop", Service: "shop"}, "feature/x")
+	if p.Deploy || len(p.Services) != 0 {
+		t.Errorf("feature/x = %+v", p)
+	}
+
+	// A file without environments takes the defaults.
+	p, _ = PlanPush(Request{File: filepath.Join(dir, "plain.json"), Monorepo: true}, "dev")
+	if !p.Deploy || p.Name != "staging" || p.Domain != "staging" || p.BuildConfiguration != "Release" || len(p.Services) != 1 {
+		t.Errorf("defaults on dev = %+v", p)
+	}
+
+	// No file at all: the polyrepo by its name, with the defaults.
+	p, _ = PlanPush(Request{ByName: true, Service: "api"}, "main")
+	if !p.Deploy || p.Name != "production" || names(p.Services)[0] != "api" {
+		t.Errorf("by name on main = %+v", p)
+	}
+}
+
+// A file without environments gets the default routes, in Resolve as in a
+// plan, and as a copy: changing them changes nothing for the next caller.
+func TestResolve_DefaultRoutesAreACopy(t *testing.T) {
+	dir := write(t, map[string]string{"s.json": `{"services": [{"name": "a"}]}`})
+	m, err := Resolve(Request{File: filepath.Join(dir, "s.json"), Monorepo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.Routes, DefaultRoutes) {
+		t.Errorf("routes = %+v, want the defaults", m.Routes)
+	}
+	m.Routes[0].Branch = "changed"
+	if DefaultRoutes[0].Branch != "dev" {
+		t.Fatalf("changing a matrix's routes changed DefaultRoutes: %+v", DefaultRoutes)
+	}
+	if by := byName(Request{Service: "x"}); !reflect.DeepEqual(by.Routes, DefaultRoutes) {
+		t.Errorf("by name: routes = %+v", by.Routes)
 	}
 }

@@ -47,6 +47,8 @@ type File struct {
 	// Environments are metadata.environments: where the file's repositories
 	// deploy, and from which branch. Empty: the caller's defaults apply.
 	Environments []Environment
+	// Signing is metadata.signing: how images are signed; nil, not at all.
+	Signing *Signing
 }
 
 // Invalid is a services file that can't be used, with every reason.
@@ -135,10 +137,17 @@ func Parse(path string, raw []byte) (*File, error) {
 	}
 
 	if md, isObj := doc["metadata"].(map[string]any); isObj {
+		f.Environments = parseEnvironments(md["environments"], add)
+		f.Signing = parseSigning(md["signing"], add)
 		if envs, isList := md["default_environments"].([]any); isList {
 			f.DefaultEnvironments = stringsOf(envs)
+		} else if len(f.Environments) > 0 {
+			// An entry without environments deploys to every one declared.
+			f.DefaultEnvironments = nil
+			for _, e := range f.Environments {
+				f.DefaultEnvironments = append(f.DefaultEnvironments, e.Name)
+			}
 		}
-		f.Environments = parseEnvironments(md["environments"], add)
 	}
 	checkBranches(f, add)
 

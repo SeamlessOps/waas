@@ -1,0 +1,77 @@
+name: 'Verify Image'
+description: >-
+  Verifies an image's cosign signature: made with the key, or keyless by a GitHub Actions workflow that ran in the
+  given repository (this one by default) and whose identity matches. Outputs verified=false (it does not fail) when
+  there is no valid signature, so the caller decides. Does nothing, and outputs verified=true, when neither a key
+  nor keyless is given.
+
+inputs:
+  image:
+    description: 'The image, as name:tag or name@digest'
+    required: true
+  key:
+    description: 'The cosign key reference the image was signed with'
+    required: false
+    default: ''
+  keyless:
+    description: "'true': the image was signed keyless"
+    required: false
+    default: ''
+  identity:
+    description: "Keyless: a regular expression the signing workflow's identity must match"
+    required: false
+    default: '^https://github.com/'
+  repository:
+    description: 'Keyless: the repository the signing workflow ran in'
+    required: false
+    default: ${{ github.repository }}
+  issuer:
+    description: 'Keyless: the OIDC issuer'
+    required: false
+    default: 'https://token.actions.githubusercontent.com'
+
+outputs:
+  verified:
+    description: "'true' when the signature is valid, or nothing was asked to be verified"
+    value: ${{ steps.verify.outputs.verified || 'true' }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: sigstore/cosign-installer@v4.1.3
+      if: inputs.key != '' || inputs.keyless == 'true'
+
+    - name: Verify
+      id: verify
+      if: inputs.key != '' || inputs.keyless == 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        KEY: ${{ inputs.key }}
+        IDENTITY: ${{ inputs.identity }}
+        ISSUER: ${{ inputs.issuer }}
+        REPOSITORY: ${{ inputs.repository }}
+      run: |
+        set -uo pipefail
+        # The repository: drop a digest, then a tag (a colon after the last
+        # slash; one before it is a registry port).
+        name="${IMAGE%@*}"
+        [[ "${name##*/}" == *:* ]] && name="${name%:*}"
+        if ! digest=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r .digest); then
+          echo "::warning::Can't read $IMAGE to verify it"
+          echo "verified=false" >> "$GITHUB_OUTPUT"; exit 0
+        fi
+        ref="$name@$digest"
+        if [[ -n "$KEY" ]]; then
+          args=(--key "$KEY" --insecure-ignore-tlog=true)
+        else
+          args=(--certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
+            --certificate-github-workflow-repository "$REPOSITORY")
+        fi
+        if cosign verify "${args[@]}" "$ref" >/dev/null; then
+          echo "[INFO] - Verified $ref"
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::$ref has no valid signature"
+          echo "verified=false" >> "$GITHUB_OUTPUT"
+        fi

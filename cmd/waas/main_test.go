@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,61 +38,51 @@ func outputs(t *testing.T, args ...string) map[string]string {
 	return out
 }
 
-// Without environments from the file, the flags give the two defaults.
-func TestRoute_Defaults(t *testing.T) {
-	services := `{"staging": [{"name": "a"}], "production": [{"name": "a"}, {"name": "b"}]}`
-	got := outputs(t, "route", "--branch", "main", "--services", services)
+func TestPlan_Outputs(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "s.json")
+	doc := `{"metadata": {"environments": [{"name": "staging", "branch": "dev", "domain": "s"}, {"name": "live", "branch": "main", "domain": "l", "build_configuration": "Production"}]},
+	  "services": [{"name": "a"}, {"name": "b", "environments": ["staging"]}]}`
+	if err := os.WriteFile(file, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := outputs(t, "plan", "-f", file, "--branch", "main")
 	for k, want := range map[string]string{
-		"deploy": "true", "environment": "production", "domain": "production", "config": "Release",
-		"promote_from_environment": "staging", "promote_from_domain": "staging",
+		"deploy": "true", "environment": "live", "domain": "l", "config": "Production",
+		"promote_from_environment": "staging", "promote_from_domain": "s",
+		"matrix": `[{"name":"a"}]`, "monorepo": "true", "staging-services": `[{"name":"a"},{"environments":["staging"],"name":"b"}]`,
 	} {
 		if got[k] != want {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
 	}
-	var matrix []map[string]any
-	if err := json.Unmarshal([]byte(got["matrix"]), &matrix); err != nil || len(matrix) != 2 {
-		t.Errorf("matrix = %s", got["matrix"])
+	// The branch defaults to GITHUB_REF_NAME.
+	t.Setenv("GITHUB_REF_NAME", "dev")
+	if got := outputs(t, "plan", "-f", file); got["environment"] != "staging" {
+		t.Errorf("from GITHUB_REF_NAME: %v", got["environment"])
 	}
 }
 
-// The caller's inputs replace every default.
-func TestRoute_Flags(t *testing.T) {
-	got := outputs(t, "route", "--branch", "develop", "--staging-branch", "develop", "--staging-env", "dev",
-		"--staging-domain", "shop-dev", "--staging-config", "Debug")
-	if got["environment"] != "dev" || got["domain"] != "shop-dev" || got["config"] != "Debug" {
-		t.Errorf("outputs = %v", got)
+func TestPlan_SigningOutputs(t *testing.T) {
+	dir := t.TempDir()
+	write := func(signing string) string {
+		f := filepath.Join(dir, "s.json")
+		doc := `{"metadata": {` + signing + `}, "services": [{"name": "a"}]}`
+		if err := os.WriteFile(f, []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return f
 	}
-}
-
-func TestRoute_FileEnvironments(t *testing.T) {
-	envs := `[{"name":"uat","branch":"develop","domain":"u"},{"name":"live","branch":"trunk","domain":"l"}]`
-	got := outputs(t, "route", "--branch", "trunk", "--environments", envs, "--services", `{"live":[{"name":"x"}]}`)
-	if got["environment"] != "live" || got["domain"] != "l" || got["promote_from_environment"] != "uat" || got["matrix"] != `[{"name":"x"}]` {
-		t.Errorf("outputs = %v", got)
+	got := outputs(t, "plan", "-f", write(`"signing": {"key": "gcpkms://k"}`), "--branch", "main")
+	if got["signing_key"] != "gcpkms://k" || got["signing_keyless"] != "" {
+		t.Errorf("key: %v", got)
 	}
-	// The defaults' branches mean nothing once the file declares environments.
-	if got := outputs(t, "route", "--branch", "main", "--environments", envs); got["deploy"] != "false" || got["matrix"] != "[]" {
-		t.Errorf("main with file environments: %v", got)
+	got = outputs(t, "plan", "-f", write(`"signing": {"keyless": {"enabled": true}}`), "--branch", "main")
+	if got["signing_keyless"] != "true" || got["signing_identity"] != "^https://github.com/" || got["signing_issuer"] != "https://token.actions.githubusercontent.com" {
+		t.Errorf("keyless: %v", got)
 	}
-}
-
-func TestRoute_Polyrepo(t *testing.T) {
-	// Nothing loaded: deployed by name.
-	got := outputs(t, "route", "--branch", "dev", "--monorepo=false", "--service", "api")
-	if got["matrix"] != `[{"name":"api"}]` || got["service"] != "api" {
-		t.Errorf("by name: %v", got)
-	}
-	// Loaded, and left out of this environment: nothing to deploy.
-	got = outputs(t, "route", "--branch", "dev", "--monorepo=false", "--service", "api", "--services", `{"staging": []}`)
-	if got["matrix"] != "[]" {
-		t.Errorf("left out: matrix = %s", got["matrix"])
-	}
-}
-
-func TestRoute_UnmappedBranchDoesNotDeploy(t *testing.T) {
-	got := outputs(t, "route", "--branch", "feature/x")
-	if got["deploy"] != "false" || got["environment"] != "" || got["matrix"] != "[]" {
-		t.Errorf("outputs = %v", got)
+	got = outputs(t, "plan", "-f", write(`"default_environments": ["staging", "production"]`), "--branch", "main")
+	if got["signing_key"] != "" || got["signing_keyless"] != "" {
+		t.Errorf("unsigned: %v", got)
 	}
 }

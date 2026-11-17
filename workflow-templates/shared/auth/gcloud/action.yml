@@ -1,5 +1,12 @@
 name: 'Authenticate with Google Cloud'
-description: 'Reusable Authentication action'
+description: >-
+  Signs in to Google Cloud through Workload Identity (WORKLOAD_SA_EMAIL, WORKLOAD_IDENTITY_PROVIDER, GKE_PROJECT from
+  the environment) and, given a registry, lets Docker push to it.
+inputs:
+  registry:
+    description: 'An image registry path, such as europe-docker.pkg.dev/project/repo; Docker is configured for its host. Empty: Docker is not configured'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -15,5 +22,8 @@ runs:
       uses: google-github-actions/setup-gcloud@v3.0.1
       
     - name: Configure Docker auth
-      run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+      if: inputs.registry != ''
       shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+      run: gcloud auth configure-docker "${REGISTRY%%/*}" --quiet

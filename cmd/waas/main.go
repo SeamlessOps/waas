@@ -4,8 +4,8 @@
 // outputs and summary.
 //
 //	waas validate -f services.json
+//	waas plan -f services/shop.json --catalog services/services.json --repository shop --branch dev
 //	waas matrix -f services/shop.json --catalog services/services.json --repository shop
-//	waas route --branch dev --environments "$ENVIRONMENTS" --services "$SERVICES"
 package main
 
 import (
@@ -22,12 +22,16 @@ import (
 	"github.com/rollwright/waas/internal/services"
 )
 
+// version is the release, set at build time (-ldflags "-X main.version=v1.2.3").
+var version = "dev"
+
 const usage = `waas does the data work of WaaS's workflows.
 
 Commands:
   validate   check a services file
+  plan       what a push deploys: its branch's environment and the services there
   matrix     what a repository deploys, per environment
-  route      the environment a branch deploys to, and its services
+  version    the CLI's version
 
 Run "waas <command> -h" for a command's flags.
 `
@@ -48,10 +52,13 @@ func run(args []string, stdout io.Writer) error {
 	switch args[0] {
 	case "validate":
 		return validate(args[1:], stdout)
+	case "plan":
+		return plan(args[1:], stdout)
 	case "matrix":
 		return matrix(args[1:], stdout)
-	case "route":
-		return route(args[1:], stdout)
+	case "version", "--version":
+		fmt.Fprintln(stdout, version)
+		return nil
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return nil
@@ -76,24 +83,113 @@ func validate(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func matrix(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("matrix", flag.ContinueOnError)
-	var r services.Request
+// requestFlags are the flags saying which repository asks, and where its
+// services file is.
+func requestFlags(fs *flag.FlagSet, r *services.Request) {
 	fs.StringVar(&r.File, "f", "", "the repository's services file; it need not exist")
 	fs.StringVar(&r.Catalog, "catalog", "", "shared services file a repository without its own is looked up in")
-	fs.StringVar(&r.Repository, "repository", "", "the repository's name, looked up in the catalog")
+	fs.StringVar(&r.Repository, "repository", repositoryName(), "the repository's name, looked up in the catalog (default: this repository, inside Actions)")
 	fs.StringVar(&r.Service, "service", "", "the service a polyrepo deploys as")
 	fs.BoolVar(&r.Monorepo, "monorepo", true, "the repository deploys several services")
 	fs.BoolVar(&r.ByName, "by-name", false, "skip the files: deploy -service by its name alone")
+}
+
+func checkRequest(cmd string, r services.Request) error {
+	if r.File == "" && !r.ByName {
+		return fmt.Errorf("%s: -f is required (or -by-name)", cmd)
+	}
+	if !r.Monorepo && r.Service == "" {
+		return fmt.Errorf("%s: a polyrepo (-monorepo=false) needs -service", cmd)
+	}
+	return nil
+}
+
+func plan(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+	var r services.Request
+	requestFlags(fs, &r)
+	branch := fs.String("branch", os.Getenv("GITHUB_REF_NAME"), "the branch pushed to (default: $GITHUB_REF_NAME)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := checkRequest("plan", r); err != nil {
+		return err
+	}
+
+	p, err := services.PlanPush(r, *branch)
+	if err != nil {
+		return err
+	}
+	list, _ := json.Marshal(p.Services)
+	from := services.Environment{}
+	if p.PromoteFrom != nil {
+		from = *p.PromoteFrom
+	}
+	outs := append(matrixOutputs(p.Matrix),
+		[2]string{"deploy", strconv.FormatBool(p.Deploy)},
+		[2]string{"environment", p.Name},
+		[2]string{"domain", p.Domain},
+		[2]string{"config", p.BuildConfiguration},
+		[2]string{"matrix", string(list)},
+		[2]string{"promote_from_environment", from.Name},
+		[2]string{"promote_from_domain", from.Domain},
+	)
+	outs = append(outs, signingOutputs(p.Signing)...)
+	if err := actions.Output(outs...); err != nil {
+		return err
+	}
+	summary := fmt.Sprintf("## Plan\n\n`%s` deploys nowhere: no environment takes this branch.\n", *branch)
+	if p.Deploy {
+		summary = fmt.Sprintf("## Plan\n\n`%s` deploys %d services from `%s` to **%s** (domain `%s`, build configuration `%s`); images are %s.\n",
+			*branch, len(p.Services), sourceOf(p.Matrix), p.Name, p.Domain, p.BuildConfiguration, p.Signing)
+	}
+	if err := actions.Summary(summary); err != nil {
+		return err
+	}
+	return printJSON(stdout, p)
+}
+
+// signingOutputs say how images are signed: signing_key for a key;
+// signing_keyless "true", with signing_identity and signing_issuer, for
+// keyless; all empty, not at all.
+func signingOutputs(s *services.Signing) [][2]string {
+	var key, keyless, identity, issuer string
+	switch {
+	case s == nil:
+	case s.Key != "":
+		key = s.Key
+	case s.Keyless != nil:
+		keyless, identity, issuer = "true", s.Keyless.Identity, s.Keyless.Issuer
+	}
+	return [][2]string{{"signing_key", key}, {"signing_keyless", keyless}, {"signing_identity", identity}, {"signing_issuer", issuer}}
+}
+
+// matrixOutputs are matrix's step outputs: whether it is a monorepo, its
+// service, and its services, all and per environment.
+func matrixOutputs(m *services.Matrix) [][2]string {
+	all, _ := json.Marshal(m.All)
+	outs := [][2]string{
+		{"monorepo", strconv.FormatBool(m.Monorepo)},
+		{"service", m.Service},
+		{"all-services", string(all)},
+	}
+	for _, env := range sortedKeys(m.Environments) {
+		list, _ := json.Marshal(m.Environments[env])
+		outs = append(outs, [2]string{env + "-services", string(list)})
+	}
+	return outs
+}
+
+func matrix(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("matrix", flag.ContinueOnError)
+	var r services.Request
+	requestFlags(fs, &r)
 	envs := fs.String("environments", "", "environments to list services for, comma-separated (default: the file's metadata.environments, else staging,production)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if r.File == "" && !r.ByName {
-		return errors.New("matrix: -f is required (or -by-name)")
-	}
-	if !r.Monorepo && r.Service == "" {
-		return errors.New("matrix: a polyrepo (-monorepo=false) needs -service")
+	if err := checkRequest("matrix", r); err != nil {
+		return err
 	}
 	r.Environments = splitList(*envs)
 
@@ -102,20 +198,9 @@ func matrix(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	all, _ := json.Marshal(m.All)
-	byEnv, _ := json.Marshal(m.Environments)
-	routes, _ := json.Marshal(m.Routes)
-	outs := [][2]string{
-		{"monorepo", strconv.FormatBool(m.Monorepo)},
-		{"service", m.Service},
-		{"all-services", string(all)},
-		{"services", string(byEnv)},
-		{"environments", string(routes)},
-	}
+	outs := matrixOutputs(m)
 	summary := fmt.Sprintf("## Services\n\n%d from `%s`\n\n| Environment | Services |\n|---|---|\n", len(m.All), sourceOf(m))
 	for _, env := range sortedKeys(m.Environments) {
-		list, _ := json.Marshal(m.Environments[env])
-		outs = append(outs, [2]string{env + "-services", string(list)})
 		summary += fmt.Sprintf("| %s | %d |\n", env, len(m.Environments[env]))
 	}
 	if err := actions.Output(outs...); err != nil {
@@ -127,92 +212,11 @@ func matrix(args []string, stdout io.Writer) error {
 	return printJSON(stdout, m)
 }
 
-func route(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("route", flag.ContinueOnError)
-	branch := fs.String("branch", "", "the branch pushed to (required)")
-	envsJSON := fs.String("environments", "", "the environments, as matrix's environments output; empty: the two built from the -staging-* and -production-* flags")
-	servicesJSON := fs.String("services", "", "services per environment, as matrix's services output")
-	monorepo := fs.Bool("monorepo", true, "the repository deploys several services")
-	service := fs.String("service", "", "a polyrepo's service, deployed by name when -services has no list for the environment")
-	// Two environments for a services file that declares none.
-	var staging, production services.Environment
-	fs.StringVar(&staging.Name, "staging-env", "staging", "first environment's name")
-	fs.StringVar(&staging.Branch, "staging-branch", "dev", "branch that deploys to the first environment")
-	fs.StringVar(&staging.Domain, "staging-domain", "staging", "first environment's domain")
-	fs.StringVar(&staging.BuildConfiguration, "staging-config", "Release", "first environment's build configuration")
-	fs.StringVar(&production.Name, "production-env", "production", "second environment's name")
-	fs.StringVar(&production.Branch, "production-branch", "main", "branch that deploys to the second environment")
-	fs.StringVar(&production.Domain, "production-domain", "production", "second environment's domain")
-	fs.StringVar(&production.BuildConfiguration, "production-config", "Release", "second environment's build configuration")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	var envs []services.Environment
-	if s := strings.TrimSpace(*envsJSON); s != "" {
-		if err := json.Unmarshal([]byte(s), &envs); err != nil {
-			return fmt.Errorf("route: -environments: %w", err)
-		}
-	}
-	if len(envs) == 0 {
-		envs = []services.Environment{staging, production}
-	}
-	var byEnv map[string]json.RawMessage
-	if s := strings.TrimSpace(*servicesJSON); s != "" {
-		if err := json.Unmarshal([]byte(s), &byEnv); err != nil {
-			return fmt.Errorf("route: -services: %w", err)
-		}
-	}
-
-	r, err := services.RouteBranch(envs, *branch)
-	if err != nil {
-		return err
-	}
-	out := struct {
-		services.Route
-		Matrix  json.RawMessage `json:"matrix"`
-		Service string          `json:"service"`
-	}{Route: r, Matrix: json.RawMessage("[]")}
-
-	if r.Deploy {
-		list, listed := byEnv[r.Name]
-		switch {
-		case listed:
-			out.Matrix = list
-		case !*monorepo && *service != "":
-			// No services file: the polyrepo deploys by its name.
-			one, _ := json.Marshal([]map[string]string{{"name": *service}})
-			out.Matrix = one
-		}
-		if !*monorepo {
-			out.Service = *service
-		}
-	}
-
-	from := services.Environment{}
-	if r.PromoteFrom != nil {
-		from = *r.PromoteFrom
-	}
-	if err := actions.Output(
-		[2]string{"deploy", strconv.FormatBool(r.Deploy)},
-		[2]string{"environment", r.Name},
-		[2]string{"domain", r.Domain},
-		[2]string{"config", r.BuildConfiguration},
-		[2]string{"matrix", string(out.Matrix)},
-		[2]string{"service", out.Service},
-		[2]string{"promote_from_environment", from.Name},
-		[2]string{"promote_from_domain", from.Domain},
-	); err != nil {
-		return err
-	}
-	summary := fmt.Sprintf("## Route\n\n`%s` deploys nowhere: no environment takes this branch.\n", *branch)
-	if r.Deploy {
-		summary = fmt.Sprintf("## Route\n\n`%s` deploys to **%s** (domain `%s`, build configuration `%s`).\n", *branch, r.Name, r.Domain, r.BuildConfiguration)
-	}
-	if err := actions.Summary(summary); err != nil {
-		return err
-	}
-	return printJSON(stdout, out)
+// repositoryName is this repository's name inside GitHub Actions
+// ($GITHUB_REPOSITORY without its owner), else "".
+func repositoryName() string {
+	full := os.Getenv("GITHUB_REPOSITORY")
+	return full[strings.LastIndex(full, "/")+1:]
 }
 
 func printJSON(w io.Writer, v any) error {

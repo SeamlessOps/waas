@@ -1,5 +1,7 @@
-name: 'Load Services Matrix'
-description: 'Reusable action to load services from a JSON file for environment-aware GitOps deployments'
+name: 'WaaS Plan'
+description: >-
+  Plans a push: reads the services file and gives the environment the branch deploys to (from the file's
+  metadata.environments, else dev to staging and main to production) and the services that deploy there.
 
 inputs:
   project_type:
@@ -23,6 +25,10 @@ inputs:
     description: 'The repository name the catalog is searched by'
     required: false
     default: ${{ github.event.repository.name }}
+  branch:
+    description: "The branch pushed to; the services file's environments say where it deploys"
+    required: false
+    default: ${{ github.ref_name }}
   load_default:
     description: 'Decide to load from default service_dir or custom one'
     required: false
@@ -57,25 +63,52 @@ inputs:
 outputs:
   regular-service:
     description: "Regular service name: the catalog entry's name when the repository has one entry there"
-    value: ${{ steps.load-services.outputs.service || steps.process-repo-type.outputs.service }}
+    value: ${{ steps.plan.outputs.service || steps.process-repo-type.outputs.service }}
   monorepo:
     description: 'Whether the repository deploys as a monorepo: from its number of entries when found in the catalog'
-    value: ${{ steps.load-services.outputs.monorepo || inputs.monorepo }}
+    value: ${{ steps.plan.outputs.monorepo || inputs.monorepo }}
   all-services:
     description: 'All services as JSON matrix'
-    value: ${{ steps.load-services.outputs.all-services }}
+    value: ${{ steps.plan.outputs.all-services }}
   staging-services:
     description: 'Services filtered for staging deployment'
-    value: ${{ steps.load-services.outputs.staging-services }}
+    value: ${{ steps.plan.outputs.staging-services }}
   production-services:
     description: 'Services filtered for production deployment'
-    value: ${{ steps.load-services.outputs.production-services }}
-  services:
-    description: 'Services per environment, as a JSON object of environment → list'
-    value: ${{ steps.load-services.outputs.services }}
-  environments:
-    description: "The services file's metadata.environments, with this repository's branches: for the router. Empty list when the file declares none"
-    value: ${{ steps.load-services.outputs.environments }}
+    value: ${{ steps.plan.outputs.production-services }}
+  deploy:
+    description: 'Whether the branch deploys anywhere'
+    value: ${{ steps.plan.outputs.deploy }}
+  environment:
+    description: 'The environment the branch deploys to'
+    value: ${{ steps.plan.outputs.environment }}
+  domain:
+    description: "The environment's domain"
+    value: ${{ steps.plan.outputs.domain }}
+  config:
+    description: "The environment's build configuration"
+    value: ${{ steps.plan.outputs.config }}
+  matrix:
+    description: 'The services deploying to the environment, as a JSON list'
+    value: ${{ steps.plan.outputs.matrix }}
+  promote_from_environment:
+    description: 'The environment before this one, whose image this one can promote; empty for the first'
+    value: ${{ steps.plan.outputs.promote_from_environment }}
+  promote_from_domain:
+    description: "That environment's domain"
+    value: ${{ steps.plan.outputs.promote_from_domain }}
+  signing_key:
+    description: "The services file's signing key; empty when not signed with a key"
+    value: ${{ steps.plan.outputs.signing_key }}
+  signing_keyless:
+    description: "'true' when images are signed keyless"
+    value: ${{ steps.plan.outputs.signing_keyless }}
+  signing_identity:
+    description: 'Keyless signing: the workflow identities trusted to sign; empty when not keyless'
+    value: ${{ steps.plan.outputs.signing_identity }}
+  signing_issuer:
+    description: 'Keyless signing: the OIDC issuer'
+    value: ${{ steps.plan.outputs.signing_issuer }}
 
 runs:
   using: "composite"
@@ -140,7 +173,7 @@ runs:
           echo "- Provide vault credentials as inputs" >> $GITHUB_STEP_SUMMARY
           echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
           echo '```yaml' >> $GITHUB_STEP_SUMMARY
-          echo "uses: rollwright/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
+          echo "uses: rollwright/waas/workflow-templates/workload/waas/plan@main" >> $GITHUB_STEP_SUMMARY
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  vault_addr: '<VAULT_ADDR>'" >> $GITHUB_STEP_SUMMARY
           echo "  vault_role: '<VAULT_ROLE>'" >> $GITHUB_STEP_SUMMARY
@@ -154,7 +187,7 @@ runs:
           echo "- Set \`load_default\` to false and provide your own \`services_dir\` and \`services_file\`" >> $GITHUB_STEP_SUMMARY
           echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
           echo '```yaml' >> $GITHUB_STEP_SUMMARY
-          echo "uses: rollwright/waas/workflow-templates/workload/utils/load-services-matrix@main" >> $GITHUB_STEP_SUMMARY
+          echo "uses: rollwright/waas/workflow-templates/workload/waas/plan@main" >> $GITHUB_STEP_SUMMARY
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  load_default: false" >> $GITHUB_STEP_SUMMARY
           echo "  services_dir: '<path-to-services-dir>'" >> $GITHUB_STEP_SUMMARY
@@ -220,29 +253,25 @@ runs:
         echo "[INFO] - 📁 Directory: $SERVICES_DIR"
         echo "[INFO] - 📝 File: $SERVICES_FILE"
 
-    - name: Build the WaaS CLI
-      shell: bash
-      run: |
-        # The CLI is built from this checkout of WaaS, so it is the same
-        # version as the action that runs it.
-        go build -C "$GITHUB_ACTION_PATH/../../../.." -o "$RUNNER_TEMP/waas" ./cmd/waas
+    - name: Set up the WaaS CLI
+      uses: rollwright/waas/workflow-templates/shared/setup-waas@main
 
-    - name: Load and Filter Services
-      id: load-services
+    - name: Plan
+      id: plan
       shell: bash
       env:
         SERVICES_FILE: "${{ inputs.services_dir }}/${{ inputs.services_file }}"
         CATALOG_FILE: ${{ inputs.catalog_file && format('{0}/{1}', inputs.services_dir, inputs.catalog_file) || '' }}
         REPOSITORY: ${{ inputs.repository }}
+        BRANCH: ${{ inputs.branch }}
         MONOREPO: ${{ inputs.monorepo }}
         LOAD: ${{ steps.process-repo-type.outputs.load }}
         SERVICE: ${{ inputs.service }}
       run: |
-        # What the router and the deployer need: whether this deploys as a
-        # monorepo, the polyrepo's service name, and the services per
-        # environment. See "waas matrix -h".
-        args=(matrix -f "$SERVICES_FILE" --repository "$REPOSITORY" --service "$SERVICE" --monorepo="$MONOREPO")
+        # What deploy needs: the environment the branch deploys to and
+        # the services there. See "waas plan -h".
+        args=(plan -f "$SERVICES_FILE" --repository "$REPOSITORY" --branch "$BRANCH" --service "$SERVICE" --monorepo="$MONOREPO")
         [[ -n "$CATALOG_FILE" ]] && args+=(--catalog "$CATALOG_FILE")
         # A polyrepo that can't read a services file deploys by its name.
         [[ "$LOAD" == "true" ]] || args+=(--by-name)
-        "$RUNNER_TEMP/waas" "${args[@]}"
+        waas "${args[@]}"

@@ -135,6 +135,19 @@ func (f *File) EnvironmentsFor(repo string) []Environment {
 	return out
 }
 
+// DefaultRoutes are the environments of a repository whose services file
+// declares none, or that has no file: dev deploys to staging and main to
+// production, each environment's name its domain, built as Release.
+var DefaultRoutes = []Environment{
+	{Name: "staging", Branch: "dev", Domain: "staging", BuildConfiguration: "Release"},
+	{Name: "production", Branch: "main", Domain: "production", BuildConfiguration: "Release"},
+}
+
+// defaultRoutes is a copy of DefaultRoutes, for a caller to keep.
+func defaultRoutes() []Environment {
+	return append([]Environment(nil), DefaultRoutes...)
+}
+
 // Route is where a push to a branch deploys.
 type Route struct {
 	// Deploy is false when no environment takes the branch.

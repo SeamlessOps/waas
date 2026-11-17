@@ -39,9 +39,11 @@ type Matrix struct {
 	All []Entry `json:"all"`
 	// Environments are the services deploying to each environment.
 	Environments map[string][]Entry `json:"environments"`
-	// Routes are the environments the file declares, with the branch that
-	// deploys to each for this repository. Empty: the file declares none.
+	// Routes are the environments, with the branch that deploys to each for
+	// this repository: the file's, else DefaultRoutes.
 	Routes []Environment `json:"routes"`
+	// Signing is how the images are signed; nil, not at all.
+	Signing *Signing `json:"signing,omitempty"`
 }
 
 // Resolve finds what r deploys:
@@ -101,6 +103,10 @@ func Resolve(r Request) (*Matrix, error) {
 		m.All = append(m.All, f.WithDefaults(e))
 	}
 	m.Routes = f.EnvironmentsFor(r.Repository)
+	if len(m.Routes) == 0 {
+		m.Routes = defaultRoutes()
+	}
+	m.Signing = f.Signing
 	envs := r.Environments
 	if len(envs) == 0 {
 		for _, e := range m.Routes {
@@ -124,7 +130,7 @@ func Resolve(r Request) (*Matrix, error) {
 
 func byName(r Request) *Matrix {
 	one := []Entry{{"name": r.Service}}
-	m := &Matrix{Monorepo: r.Monorepo, All: one, Environments: map[string][]Entry{}, Routes: []Environment{}}
+	m := &Matrix{Monorepo: r.Monorepo, All: one, Environments: map[string][]Entry{}, Routes: defaultRoutes()}
 	if !r.Monorepo {
 		m.Service = r.Service
 	}
