@@ -1,6 +1,6 @@
-# Contributing to ondgo-products Workflows
+# Contributing to WaaS
 
-Thank you for considering contributing to the ondgo-products GitHub Actions workflows! Your contributions help keep our CI/CD pipelines secure, maintainable, and extensible across all projects.
+Thank you for considering contributing to the WaaS GitHub Actions workflows! Your contributions help keep our CI/CD pipelines secure, maintainable, and extensible across all projects.
 
 ---
 
@@ -83,4 +83,4 @@ Please open issues for bugs, feature requests, or questions. Include:
 
 ---
 
-Thank you for helping improve ondgo-products CI/CD workflows! Your effort makes our deployment pipelines robust, secure, and scalable.
+Thank you for helping improve the WaaS workflows! Your effort makes our deployment pipelines robust, secure, and scalable.

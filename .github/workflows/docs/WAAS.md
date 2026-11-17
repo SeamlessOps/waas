@@ -1,16 +1,8 @@
-Here's the updated WaaS documentation with metrics collection integrated:
+# WaaS architecture
 
-# 🚀 GitOps Workflow as a Service (WaaS)
+How a deployment moves through WaaS, from the calling workflow to the GitOps repository, Slack and the dashboard. The [README](../../../README.md) covers how to use it.
 
-A unified, enterprise-grade deployment platform that provides consistent GitOps workflows across multiple project types, repository structures, and environments through a simple, intelligent interface.
-
-## 🌟 Overview
-
-WaaS abstracts away deployment complexity with smart routing, conditional execution, intelligent notifications, and comprehensive metrics collection. It adapts to your repository structure (monorepo or polyrepo) and provides the optimal deployment strategy automatically.
-
-## 🏗️ Architecture
-
-### High Level Flow
+## High-level flow
 
 ```mermaid
 flowchart TB
@@ -30,9 +22,9 @@ flowchart TB
     K L_K_L_0@-- dev --> L
     K L_K_M_0@-- main --> M
     RouterOutputs L_RouterOutputs_F_0@--> F["WaaS Deployer"]
-    F L_F_G_0@--> G["Smart Notifications"]
+    F L_F_G_0@--> G["Notifications"]
     F L_F_N_0@--> N["Metrics Collection"]
-    N L_N_O_0@--> O["WaaS Dashboard<br/>waas.mycompany-example.com"]
+    N L_N_O_0@--> O["WaaS Dashboard"]
 
      A:::Sky
      D:::Router
@@ -63,7 +55,17 @@ flowchart TB
     L_N_O_0@{ animation: fast }
 ```
 
-### Detailed Flow
+A service repository calls the reusable workflow, [`waas.yml`](../waas.yml), its entry point. Each stage after it is a composite action:
+
+| Stage | Action | What it does |
+|---|---|---|
+| Service discovery | [`load-services-matrix`](../../../workflow-templates/workload/utils/load-services-matrix) | Reads the services file, the repository's own or its entries in the shared catalog, and decides whether the repository deploys one service or several, and which deploy to each environment. The decision is made by the `waas` CLI. |
+| Router | [`router`](../../../workflow-templates/workload/waas/router) | Finds the environment the branch deploys to, from the services file's `metadata.environments` (by default `dev` to staging and `main` to production), and gives the deployer that environment's name, domain and build configuration, and the services to deploy: a matrix for a monorepo, one service for a polyrepo. |
+| Deployer | [`deployer`](../../../workflow-templates/workload/waas/deployer) | Runs once per service, in parallel. It promotes or builds the image, publishes it, and writes its tag to the service's values in the GitOps repository. |
+| Notifications | [`slack-notify`](../../../workflow-templates/shared/slack-notify) | Posts the result to Slack when a deployment ran; skipped and unchanged services send nothing. |
+| Metrics collection | [`collect-metrics`](../../../workflow-templates/workload/utils/collect-metrics) | Sends each deployment's record to the WaaS dashboard. |
+
+## Detailed flow
 
 ```mermaid
 sequenceDiagram
@@ -89,274 +91,20 @@ sequenceDiagram
     
     D->>D: Build, Push & Update GitOps
     D->>M: Deployment Metrics
-    M->>DB: Store Metrics<br/>waas.mycompany-example.com
+    M->>DB: Store Metrics
     D->>S: Conditional Notification
     S->>S: Notify Only on Changes
 ```
 
-## 🚀 Quick Start
+1. The caller passes its project type and repository settings; the services file supplies the rest per service.
+2. WaaS loads the services and decides whether the repository is a monorepo or a polyrepo.
+3. The router resolves the environment from the branch; a branch no environment takes deploys nothing.
+4. The deployer runs per service: a matrix of services for a monorepo, a single service for a polyrepo.
+5. For each service it builds and pushes the image, or promotes the one staging already built, and updates the GitOps repository. A service whose values already hold the tag the run would write is skipped.
+6. The deployment's record goes to the dashboard, and Slack is notified only when something was deployed.
 
-### Basic Usage - Monorepo (Default)
+## The WaaS dashboard
 
-```yaml
-# .github/workflows/gitops.yml
-name: Deploy via WaaS
+The dashboard records every deployment WaaS runs and shows them by environment, service, status and time.
 
-on:
-  pull_request:
-    branches: [ "dev", "main" ]
-  push:
-    branches: [ "dev", "main" ]
-
-jobs:
-  deploy:
-    uses: rollwright/waas/.github/workflows/waas.yml@v1
-    with:
-      project_type: dotnet  # or 'nx', 'python'
-    permissions:
-      id-token: write
-      contents: read
-    secrets: inherit
-```
-
-### View Deployment Metrics
-
-All deployments automatically feed into the **WaaS Dashboard**:
-```
-📊 Live Dashboard: https://waas.mycompany-example.com
-```
-
-## 📊 Metrics & Observability
-
-### Automatic Metrics Collection
-
-Every deployment automatically collects:
-- ✅ **Deployment status** (success/failure/cancelled)
-- ⏱️ **Deployment duration** in seconds  
-- 🌍 **Environment** (staging/production)
-- 🔧 **Service name** and project type
-- 📝 **Commit information** (hash, author, message)
-- 🕒 **Timestamp** of deployment
-
-### Real-time Dashboard Features
-
-Access your deployment metrics at **https://waas.mycompany-example.com**:
-
-- **📈 Live Statistics**: Success rates, average durations, deployment counts
-- **🔍 Advanced Filtering**: By environment, service, status, time range
-- **📱 Responsive Design**: Works on desktop and mobile
-- **🔄 Auto-refresh**: Updates every 30 seconds
-- **📊 Pagination**: Handle large deployment histories efficiently
-
-### Example Dashboard View
-
-```
-Deployment Dashboard - Last 24 Hours
-┌─────────────────┬────────────────┬─────────────┐
-│ Total Deploys   │ Success Rate   │ Avg Duration│
-│ 47              │ 94%            │ 45s         │
-└─────────────────┴────────────────┴─────────────┘
-
-Recent Deployments
-┌────────────┬─────────────┬────────┬─────────┐
-│ Service    │ Environment │ Status │ Duration│
-├────────────┼─────────────┼────────┼─────────┤
-│ api-gateway│ production  │ ✅     │ 38s     │
-│ web-app    │ staging     │ ❌     │ 120s    │
-│ auth-svc   │ production  │ ✅     │ 52s     │
-└────────────┴─────────────┴────────┴─────────┘
-```
-
-## 🏷️ Inputs
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `project_type` | ✅ | - | `dotnet`, `nx`, `python`, `java`, `generic` |
-| `monorepo` | ❌ | `true` | `true` for monorepos, `false` for single-service repos |
-| `service` | ❌ | repo name | Service name (required if `monorepo: false`) |
-| `dockerfile` | ❌ | `Dockerfile` | Dockerfile path for builds |
-| `staging_env` | ❌ | `staging` | Staging environment name |
-| `production_env` | ❌ | `production` | Production environment name |
-| `staging_domain` | ❌ | `ondgo-dev` | Staging domain identifier |
-| `production_domain` | ❌ | `ondgo-ng` | Production domain identifier |
-| `promote` | ❌ | `true` | Promote staging's image to production instead of rebuilding (see How It Works) |
-
-## 🎯 How It Works
-
-### 1. **Smart Service Discovery**
-- **Monorepo**: Discovers multiple services from JSON configuration
-- **Polyrepo**: Uses repository name as single service
-- **Automatic validation** of service definitions and structure
-
-### 2. **Intelligent Environment Routing**
-```yaml
-# Built-in branch → environment mapping:
-"dev" branch   → Staging environment
-"main" branch  → Production environment
-```
-- No configuration needed - follows organizational standards
-- Centralized routing logic in reusable router component
-
-### 3. **Adaptive Deployment Strategy**
-- **Monorepo**: Matrix deployment for multiple services in parallel
-- **Polyrepo**: Focused single-service deployment
-- **Conditional execution**: Skips deployments when no changes detected
-- **Promotion to production**: a merge into `main` reuses staging's image instead of building it again, when
-  staging's tag points at the same code (the compare between its commit and the merged one lists no file). The image is
-  copied to the production name and production's tag is written; otherwise it builds as before. Every project type
-  promotes, since images take their settings at runtime; a service can opt out with `"promote": false`
-
-### 4. **Automatic Metrics Collection**
-- **Real-time tracking**: Every deployment automatically recorded
-- **GitOps storage**: Metrics stored in GitOps repository
-- **Dashboard integration**: Live updates to waas.mycompany-example.com
-- **Zero configuration**: No setup required
-
-### 5. **Smart Notifications**
-- Notifies **only when deployments actually occur**
-- Clear environment context and status
-- No spam for skipped or unchanged deployments
-
-## 📊 Metrics Storage & Access
-
-### Data Flow
-```
-WaaS Deployment → GitOps Repository (metrics/) → WaaS Dashboard
-```
-
-### Access Your Data
-- **Live Dashboard**: https://waas.mycompany-example.com
-- **Raw Metrics**: GitOps repository `metrics/data/deployments.json`
-- **API Access**: REST endpoint for integration
-
-## 📁 Repository Patterns
-
-### Monorepo Structure
-```json
-// .github/workflows/services/<repository-name>.json
-{
-  "metadata": {
-    "default_environments": ["staging", "production"]
-  },
-  "services": [
-    {
-      "name": "web-app",
-      "directory": "apps/web",
-      "nx_project": "web",
-      "environments": ["staging", "production"]
-    },
-    {
-      "name": "api-service",
-      "directory": "apps/api", 
-      "nx_project": "api",
-      "environments": ["staging"]
-    }
-  ]
-}
-```
-
-### Polyrepo Structure
-```yaml
-# Simple single-service deployment
-monorepo: false
-service: user-authentication  # Optional: defaults to repository name
-```
-
-## 🛠️ Development
-
-### Adding New Project Types
-
-Extend WaaS in 2 simple steps:
-
-#### **1. Create Project Template**
-```
-workflow-templates/workload/templates/{project_type}/action.yml
-```
-
-**Example: `python/action.yml`**
-```yaml
-name: 'Python Deployment'
-inputs:
-  python_version:
-    required: true
-  requirements_file:
-    required: false
-    default: 'requirements.txt'
-# Add your Python-specific build logic
-```
-
-#### **2. Use in Client Workflows**
-```yaml
-jobs:
-  deploy:
-    uses: rollwright/waas/.github/workflows/waas.yml@v2
-    with:
-      project_type: python
-      python_version: "3.11"
-      # Automatically available to Python template
-```
-
-**Merge → Release → Done.** New project type available to all clients.
-
-### Architecture Components
-
-| Component | Purpose | Reusable |
-|-----------|---------|----------|
-| **WaaS Router** | Environment routing & configuration | ✅ `waas-router` |
-| **Service Discovery** | Load services based on repo type | ✅ `load-services-matrix` |
-| **Deployer** | Project-specific build & deployment | ✅ `waas/deployer` |
-| **Metrics Collector** | Deployment tracking & analytics | ✅ `collect-metrics` |
-| **Templates** | Technology-specific implementations | ✅ By project type |
-
-## 🔍 Debugging
-
-### View Intelligent Step Summaries
-Each run provides detailed insights:
-- Repository type detection (monorepo/polyrepo)
-- Service discovery results
-- Environment routing decisions
-- Deployment outcomes
-- Change detection results
-- Metrics collection status
-
-### Monitor Deployment Health
-```
-📊 WaaS Dashboard: https://waas.mycompany-example.com
-```
-
-### Common Patterns
-
-#### Monorepo Deployment
-```
-📦 Loaded 3 services for staging
-🔄 Matrix deployment: api, web, worker → staging
-✅ Deployed 3/3 services successfully
-📊 Metrics recorded to dashboard
-```
-
-#### Polyrepo Deployment  
-```
-🎯 Single service: auth-api → production
-🚀 Focused deployment completed
-📊 Metrics recorded to dashboard
-```
-
-#### No Changes Detected
-```
-🎉 Smart detection: Image up-to-date
-⏭️ Skipping deployment - no changes needed
-💡 Saved: Build time & resources
-```
-
-## 🎯 Benefits
-
-- **📊 Data-Driven Decisions**: Real-time deployment analytics
-- **🔍 Operational Visibility**: Track patterns and identify trends  
-- **🚀 Quality Metrics**: Monitor success rates and performance
-- **🛠️ Troubleshooting**: Quickly identify problematic services
-- **👥 Team Awareness**: Live dashboard accessible to entire organization
-- **📈 Historical Analysis**: Maintain deployment history for reporting
-
----
-
-**Ready to deploy?** Your metrics will automatically appear at **https://waas.mycompany-example.com** 🎉
+`collect-metrics` sends each deployment to `POST <waas_api_url>/api/deployments` with a workflow API key (`X-API-Key`). The record carries the environment, service, service type, status, duration, commit, image tag, and the workflow run it came from. `GET /api/deployments` and `/api/insights` serve the history and its statistics.

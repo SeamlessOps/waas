@@ -77,11 +77,16 @@ inputs:
     required: false
     default: 'true'
   promote_from_service:
-    description: "The service's values key in the source environment (e.g. api-ondgo-dev). Empty: always build"
+    description: "The service's values key in the source environment (e.g. api-staging). Empty: always build"
     required: false
     default: ''
   promote_from_environment:
     description: 'The source environment (e.g. staging)'
+    required: false
+    default: ''
+
+  dashboard_url:
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
     required: false
     default: ''
 
@@ -126,6 +131,7 @@ runs:
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        dashboard_url: ${{ inputs.dashboard_url }}
         github_token: ${{ github.token }}
 
     - name: Confirm if Image Tag Needs Update
@@ -138,6 +144,7 @@ runs:
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        dashboard_url: ${{ inputs.dashboard_url }}
     
     - name: Set start timestamp
       id: start-time
@@ -235,6 +242,7 @@ runs:
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        dashboard_url: ${{ inputs.dashboard_url }}
         nx_project: ${{ inputs.nx_project }}
         project_type: ${{ inputs.project_type }}
         service: ${{ inputs.service }}

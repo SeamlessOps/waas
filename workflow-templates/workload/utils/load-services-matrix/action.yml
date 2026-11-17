@@ -70,6 +70,12 @@ outputs:
   production-services:
     description: 'Services filtered for production deployment'
     value: ${{ steps.load-services.outputs.production-services }}
+  services:
+    description: 'Services per environment, as a JSON object of environment → list'
+    value: ${{ steps.load-services.outputs.services }}
+  environments:
+    description: "The services file's metadata.environments, with this repository's branches: for the router. Empty list when the file declares none"
+    value: ${{ steps.load-services.outputs.environments }}
 
 runs:
   using: "composite"
@@ -214,262 +220,29 @@ runs:
         echo "[INFO] - 📁 Directory: $SERVICES_DIR"
         echo "[INFO] - 📝 File: $SERVICES_FILE"
 
+    - name: Build the WaaS CLI
+      shell: bash
+      run: |
+        # The CLI is built from this checkout of WaaS, so it is the same
+        # version as the action that runs it.
+        go build -C "$GITHUB_ACTION_PATH/../../../.." -o "$RUNNER_TEMP/waas" ./cmd/waas
+
     - name: Load and Filter Services
       id: load-services
       shell: bash
       env:
         SERVICES_FILE: "${{ inputs.services_dir }}/${{ inputs.services_file }}"
-        CATALOG_FILE: "${{ inputs.services_dir }}/${{ inputs.catalog_file }}"
+        CATALOG_FILE: ${{ inputs.catalog_file && format('{0}/{1}', inputs.services_dir, inputs.catalog_file) || '' }}
         REPOSITORY: ${{ inputs.repository }}
         MONOREPO: ${{ inputs.monorepo }}
         LOAD: ${{ steps.process-repo-type.outputs.load }}
         SERVICE: ${{ inputs.service }}
       run: |
-        # What the router and the deployer need back: whether this deploys as a
-        # monorepo, and the polyrepo's service name (the catalog entry's).
-        FROM_CATALOG=false
-        trap 'echo "monorepo=$MONOREPO" >> $GITHUB_OUTPUT; [[ "$MONOREPO" == "true" ]] || echo "service=$SERVICE" >> $GITHUB_OUTPUT' EXIT
-
-        # A polyrepo without a services file deploys by name: one service,
-        # every environment, the build options from the caller's inputs.
-        name_only() {
-          ONE=$(jq -cn --arg service "$SERVICE" '[{"name": $service}]')
-          echo "all-services=$ONE" >> $GITHUB_OUTPUT
-          echo "staging-services=$ONE" >> $GITHUB_OUTPUT
-          echo "production-services=$ONE" >> $GITHUB_OUTPUT
-        }
-        if [[ "$LOAD" != "true" ]]; then
-          name_only
-          exit 0
-        fi
-
-        echo "[INFO] - 📁 Directory: ${{ inputs.services_dir }}"
-        echo "[INFO] - 📝 File: ${{ inputs.services_file }}"
-
-        if [ ! -f "$SERVICES_FILE" ]; then
-          # A repository without a file of its own: its entries in the catalog,
-          # by repository name, else the entry named by the service input.
-          if [ -f "$CATALOG_FILE" ] && jq -e --arg repo "$REPOSITORY" --arg service "$SERVICE" \
-              '[.services[]? | select(.repository == $repo or .name == $service)] | length > 0' "$CATALOG_FILE" > /dev/null 2>&1; then
-            echo "[INFO] - No ${{ inputs.services_file }}: $REPOSITORY's entries in ${{ inputs.catalog_file }}"
-            SERVICES_FILE="$CATALOG_FILE"
-            MONOREPO=false
-            FROM_CATALOG=true
-          elif [[ "$MONOREPO" != "true" ]]; then
-            echo "[INFO] - No services file for $SERVICE: deploying by name"
-            name_only
-            exit 0
-          else
-            echo "❌ Services configuration file not found: $SERVICES_FILE (and $REPOSITORY is not in ${{ inputs.catalog_file }})"
-            exit 1
-          fi
-        fi
-
-        echo "[INFO] - 📥 Reading services configuration from $SERVICES_FILE"
-
-        # Basic JSON syntax validation
-        echo "[INFO] - 🔍 Validating JSON syntax..."
-        if ! jq empty "$SERVICES_FILE" 2>/dev/null; then
-          echo "[INFO] - ❌ Invalid JSON syntax in services file: $SERVICES_FILE"
-          echo "[INFO] - 💡 Please validate your JSON using: jq empty $SERVICES_FILE"
-          
-          # Export to Step summary
-          echo "## 🔍 Validating JSON syntax..." >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ❌ Invalid JSON syntax in services file: \`$SERVICES_FILE\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "Please validate your JSON using:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "jq empty $SERVICES_FILE" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-        echo "[INFO] - ✅ JSON syntax is valid"
-
-        echo "🔍 Validating services structure..."
-        if ! jq -e '.services' "$SERVICES_FILE" > /dev/null; then
-          echo "❌ Services file missing required 'services' key: $SERVICES_FILE"
-          echo "📋 Expected structure:"
-          echo '{
-            "services": [
-              {
-                "name": "service-name",
-                "environments": ["staging", "production"]
-              }
-            ]
-          }'
-
-          # Export to Step summary - using individual echo statements
-          echo "## 🔍 Validating services structure..." >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ❌ Services file _\`$SERVICES_FILE\`_ missing required \`'services'\` key" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📋 Expected structure:" >> $GITHUB_STEP_SUMMARY
-          echo '```json' >> $GITHUB_STEP_SUMMARY
-          echo '{' >> $GITHUB_STEP_SUMMARY
-          echo '  "services": [' >> $GITHUB_STEP_SUMMARY
-          echo '    {' >> $GITHUB_STEP_SUMMARY
-          echo '      "name": "service-name",' >> $GITHUB_STEP_SUMMARY
-          echo '      "environments": ["staging", "production"]' >> $GITHUB_STEP_SUMMARY
-          echo '    }' >> $GITHUB_STEP_SUMMARY
-          echo '  ]' >> $GITHUB_STEP_SUMMARY
-          echo '}' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-        echo "[INFO] - ✅ Required 'services' key found"
-
-        # Validate services is an array
-        if ! jq -e '.services | type == "array"' "$SERVICES_FILE" > /dev/null; then
-          echo "[INFO] - ❌ 'services' must be an array in: $SERVICES_FILE"
-
-          # Export to Step summary
-          echo "## 🔍 Validating 'services' structure..." >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ❌ 'services' must be an array in: \`$SERVICES_FILE\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "Please validate your JSON using:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "jq -e '.services | type == \"array\"' \"$SERVICES_FILE\"" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-        echo "[INFO] - ✅ 'services' is a valid array"
-
-        # Validate each service has required fields
-        echo "[INFO] - 🔍 Validating individual service structure..."
-        INVALID_SERVICES=$(jq -r '
-          .services | to_entries[] | 
-          select(.value.name == null or .value.name == "") | 
-          "Service at index \(.key) missing name"
-        ' "$SERVICES_FILE")
-        
-        if [ -n "$INVALID_SERVICES" ]; then
-          echo "[INFO] - ❌ Some services are missing required 'name' field:"
-          echo "[INFO] - 📝 $INVALID_SERVICES"
-
-          # Export to Step summary
-          echo "## 🔍 Validating individual service structure..." >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ❌ Some services are missing required \`'name'\` field:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "📝 Invalid services:" >> $GITHUB_STEP_SUMMARY
-          echo "$INVALID_SERVICES" >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-        echo "✅ All services have required fields"
-
-        # Validate environments format if present
-        echo "🔍 Validating environments format..."
-        INVALID_ENVIRONMENTS=$(jq -r '
-          .services[] | 
-          select(.environments != null and (.environments | type != "array")) | 
-          "Service \(.name) has invalid environments format (must be array)"
-        ' "$SERVICES_FILE")
-        
-        if [ -n "$INVALID_ENVIRONMENTS" ]; then
-          echo "[INFO] - ❌ Invalid environments format:"
-          echo "[INFO] - 📝 $INVALID_ENVIRONMENTS"
-
-          # Export to Step summary
-          echo "## 🔍 Validating environments format..." >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ❌ Invalid \`environments\` format:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "📝 Invalid services:" >> $GITHUB_STEP_SUMMARY
-          echo "$INVALID_ENVIRONMENTS" >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-        echo "✅ All environments have valid format"
-
-        # Get default environments from metadata
-        DEFAULT_ENVS=$(jq -c '.metadata.default_environments // ["staging", "production"]' "$SERVICES_FILE")
-        echo "Default environments: $DEFAULT_ENVS"
-
-        # Load all services. A polyrepo's file describes the repository's one
-        # service, so only the entry named after it is deployed.
-        ALL_SERVICES=$(jq -c '.services' "$SERVICES_FILE")
-        if [[ "$FROM_CATALOG" == "true" ]]; then
-          # The repository's entries (the one the service input names, if it
-          # names one), else the entry the service input names. One entry is a
-          # polyrepo deploying under its name; several are a monorepo.
-          ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg repo "$REPOSITORY" --arg service "$SERVICE" '
-            [.[] | select(.repository == $repo)] as $own
-            | if ($own | length) > 0
-              then ([$own[] | select(.name == $service)] | if length > 0 then . else $own end)
-              else [.[] | select(.name == $service)][:1]
-              end')
-          if [[ "$(echo "$ALL_SERVICES" | jq length)" -gt 1 ]]; then
-            MONOREPO=true
-          else
-            SERVICE=$(echo "$ALL_SERVICES" | jq -r '.[0].name')
-          fi
-        elif [[ "$MONOREPO" != "true" ]]; then
-          ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --arg service "$SERVICE" '[.[] | select(.name == $service)]')
-          if [[ "$(echo "$ALL_SERVICES" | jq length)" -eq 0 ]]; then
-            NAMES=$(jq -r '[.services[].name] | join(", ")' "$SERVICES_FILE")
-            echo "[INFO] - ❌ No service named '$SERVICE' in $SERVICES_FILE (it has: $NAMES)"
-            echo "## ❌ Service Not Found" >> $GITHUB_STEP_SUMMARY
-            echo "No service named \`$SERVICE\` in \`$SERVICES_FILE\` (it has: $NAMES). Set the caller's \`service\` input to one of them." >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-        fi
-
-        # A repository's defaults (the file's "repositories" block, by each
-        # entry's "repository") under each of its entries: the entry wins, and
-        # objects such as "version" merge key by key.
-        REPOSITORIES=$(jq -c '.repositories // {}' "$SERVICES_FILE")
-        ALL_SERVICES=$(echo "$ALL_SERVICES" | jq -c --argjson repos "$REPOSITORIES" \
-          'map((($repos[.repository // ""] // {}) * .))')
-        
-        # Validate that services array is not empty
-        SERVICE_COUNT=$(echo "$ALL_SERVICES" | jq length)
-        if [ "$SERVICE_COUNT" -eq 0 ]; then
-          echo "[INFO] - ❌ No services found in configuration file: $SERVICES_FILE"
-          echo "[INFO] - 📝 At least one service must be defined"
-
-          # Export to Step summary
-          echo "## ❌ No Services Found" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** No services found in configuration file: $SERVICES_FILE" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "At least one service must be defined in the services array." >> $GITHUB_STEP_SUMMARY
-          exit 1
-        fi
-
-        # Define jq function for filtering
-        filter_services() {
-          local env="$1"
-          jq -cn --argjson services "$ALL_SERVICES" --argjson default_envs "$DEFAULT_ENVS" --arg env "$env" '
-            def filter_services($env):
-              [$services[]
-               | .environments as $service_envs
-               | ($service_envs // $default_envs) as $effective_envs
-               | select($effective_envs | index($env))
-              ];
-            filter_services($env)
-          '
-        }
-
-        # Run for both environments
-        STAGING_SERVICES=$(filter_services "staging")
-        PRODUCTION_SERVICES=$(filter_services "production")
-
-        # Output results
-        echo "all-services=$ALL_SERVICES" >> $GITHUB_OUTPUT
-        echo "staging-services=$STAGING_SERVICES" >> $GITHUB_OUTPUT
-        echo "production-services=$PRODUCTION_SERVICES" >> $GITHUB_OUTPUT
-
-        # Calculate counts for summary
-        STAGING_COUNT=$(echo "$STAGING_SERVICES" | jq length)
-        PRODUCTION_COUNT=$(echo "$PRODUCTION_SERVICES" | jq length)
-
-        echo "[INFO] - ✅ Loaded services summary:"
-        echo "[INFO] -   Total services: $SERVICE_COUNT"
-        echo "[INFO] -   Staging services: $STAGING_COUNT"
-        echo "[INFO] -   Production services: $PRODUCTION_COUNT"
-
-        # Add to step summary for quick overview
-        # echo "## 📊 Services Loaded Successfully" >> $GITHUB_STEP_SUMMARY
-        # echo "- **Total services:** $SERVICE_COUNT" >> $GITHUB_STEP_SUMMARY
-        # echo "- **Staging services:** $STAGING_COUNT" >> $GITHUB_STEP_SUMMARY
-        # echo "- **Production services:** $PRODUCTION_COUNT" >> $GITHUB_STEP_SUMMARY
+        # What the router and the deployer need: whether this deploys as a
+        # monorepo, the polyrepo's service name, and the services per
+        # environment. See "waas matrix -h".
+        args=(matrix -f "$SERVICES_FILE" --repository "$REPOSITORY" --service "$SERVICE" --monorepo="$MONOREPO")
+        [[ -n "$CATALOG_FILE" ]] && args+=(--catalog "$CATALOG_FILE")
+        # A polyrepo that can't read a services file deploys by its name.
+        [[ "$LOAD" == "true" ]] || args+=(--by-name)
+        "$RUNNER_TEMP/waas" "${args[@]}"

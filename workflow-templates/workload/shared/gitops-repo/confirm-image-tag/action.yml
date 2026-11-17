@@ -23,6 +23,10 @@ inputs:
     description: 'The GitOps branch to use'
     required: false
     default: 'main'
+  dashboard_url:
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    required: false
+    default: ''
 
 outputs:
   no-changes:
@@ -97,6 +101,8 @@ runs:
     - name: Add Success Message
       if: success()
       shell: bash
+      env:
+        DASHBOARD_URL: ${{ inputs.dashboard_url }}
       run: |
         if [ "$NO_CHANGES" = "true" ]; then
           echo "## ✅ GitOps Update Complete" >> $GITHUB_STEP_SUMMARY
@@ -107,9 +113,10 @@ runs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The deployment is up-to-date!" >> $GITHUB_STEP_SUMMARY
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "[View Deployment Dashboard](https://argocd.ondgo.ng/applications/ondgo-argocd/ondgo-products-${{ inputs.environment }}?view=tree)" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$DASHBOARD_URL" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "[View the deployment](${DASHBOARD_URL//\{environment\}/${{ inputs.environment }}})" >> $GITHUB_STEP_SUMMARY
+          fi
         fi
 
     - name: Add Failure Message

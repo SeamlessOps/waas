@@ -1,138 +1,136 @@
 name: 'WaaS Environment Router'
-description: 'Routes deployments to appropriate environments based on branch and repository type'
+description: >-
+  Routes a push to the environment its branch deploys to, and gives that environment's name, domain, build
+  configuration and services. The environments come from the services file's metadata.environments (the loader's
+  environments output); without them, from the staging_* and production_* inputs.
 
 inputs:
+  branch:
+    description: 'The branch pushed to'
+    required: false
+    default: ${{ github.ref_name }}
+  environments:
+    description: "The services file's environments, as load-services-matrix's environments output. Empty: the inputs below"
+    required: false
+    default: ''
+  services:
+    description: 'Services per environment, as load-services-matrix''s services output'
+    required: false
+    default: ''
   staging_env:
-    description: 'Staging environment name'
+    description: 'First environment, when the services file declares none'
     required: false
     default: 'staging'
+  staging_branch:
+    description: 'Branch that deploys to the first environment, when the services file declares none'
+    required: false
+    default: 'dev'
+  staging_domain:
+    description: "First environment's domain, when the services file declares none"
+    required: false
+    default: 'staging'
+  staging_config:
+    description: "First environment's build configuration, when the services file declares none"
+    required: false
+    default: 'Release'
   production_env:
-    description: 'Production environment name'
+    description: 'Second environment, when the services file declares none'
     required: false
     default: 'production'
-  staging_domain:
-    description: 'Staging domain identifier'
+  production_branch:
+    description: 'Branch that deploys to the second environment, when the services file declares none'
     required: false
-    default: 'ondgo-dev'
+    default: 'main'
   production_domain:
-    description: 'Production domain identifier'
+    description: "Second environment's domain, when the services file declares none"
     required: false
-    default: 'ondgo-ng'
+    default: 'production'
+  production_config:
+    description: "Second environment's build configuration, when the services file declares none"
+    required: false
+    default: 'Release'
+  staging_services:
+    description: 'Services for the first environment, when services is not given'
+    required: false
+    default: ''
+  production_services:
+    description: 'Services for the second environment, when services is not given'
+    required: false
+    default: ''
   monorepo:
-    description: 'Monorepo identifier'
+    description: 'The repository deploys several services'
     required: false
-    type: boolean
-    default: true
+    default: 'true'
   service:
-    description: 'Service name. Required if monorepo is disabled'
+    description: "A polyrepo's service, deployed by name when no services were loaded"
     required: false
     default: ${{ github.event.repository.name }}
-  staging_services:
-    description: 'Staging services matrix'
-    required: true
-  production_services:
-    description: 'Production services matrix'
-    required: true  
 
 outputs:
+  deploy:
+    description: 'Whether the branch deploys anywhere'
+    value: ${{ steps.route.outputs.deploy }}
   config:
-    description: 'Build configuration'
+    description: "The environment's build configuration"
     value: ${{ steps.route.outputs.config }}
   domain:
-    description: 'Domain suffix'
+    description: "The environment's domain"
     value: ${{ steps.route.outputs.domain }}
   environment:
-    description: 'Target environment'
+    description: 'The environment'
     value: ${{ steps.route.outputs.environment }}
   matrix:
-    description: 'Services matrix for deployment'
+    description: 'The services to deploy, as a JSON list'
     value: ${{ steps.route.outputs.matrix }}
   service:
-    description: 'Single service name (for polyrepo)'
+    description: "A polyrepo's service name; empty for a monorepo"
     value: ${{ steps.route.outputs.service }}
+  promote_from_environment:
+    description: 'The environment before this one, whose image this one can promote; empty for the first'
+    value: ${{ steps.route.outputs.promote_from_environment }}
+  promote_from_domain:
+    description: "That environment's domain"
+    value: ${{ steps.route.outputs.promote_from_domain }}
 
 runs:
   using: "composite"
   steps:
-    - name: Route Environment
+    - name: Build the WaaS CLI
+      shell: bash
+      run: go build -C "$GITHUB_ACTION_PATH/../../../.." -o "$RUNNER_TEMP/waas" ./cmd/waas
+
+    - name: Route
       id: route
       shell: bash
       env:
-        PRODUCTION_CONFIG: Production
-        STAGING_CONFIG: Release
-        # The services JSON goes through the environment, never into the
-        # script's text: a quote in any field (a note's apostrophe) would end
-        # the shell string and run the rest as commands.
+        # JSON goes through the environment, never into the script's text: a
+        # quote in any field would end the shell string.
+        BRANCH: ${{ inputs.branch }}
+        ENVIRONMENTS: ${{ inputs.environments }}
+        SERVICES: ${{ inputs.services }}
         STAGING_SERVICES: ${{ inputs.staging_services }}
         PRODUCTION_SERVICES: ${{ inputs.production_services }}
+        MONOREPO: ${{ inputs.monorepo }}
+        SERVICE: ${{ inputs.service }}
+        STAGING_ENV: ${{ inputs.staging_env }}
+        STAGING_BRANCH: ${{ inputs.staging_branch }}
+        STAGING_DOMAIN: ${{ inputs.staging_domain }}
+        STAGING_CONFIG: ${{ inputs.staging_config }}
+        PRODUCTION_ENV: ${{ inputs.production_env }}
+        PRODUCTION_BRANCH: ${{ inputs.production_branch }}
+        PRODUCTION_DOMAIN: ${{ inputs.production_domain }}
+        PRODUCTION_CONFIG: ${{ inputs.production_config }}
       run: |
-        # Determine environment based on branch
-        case "${GITHUB_REF##*/}" in
-          "dev")
-            ENVIRONMENT_CONFIG="$STAGING_CONFIG"
-            ENVIRONMENT_DOMAIN="${{ inputs.staging_domain }}"
-            ENVIRONMENT_NAME="${{ inputs.staging_env }}"
-            SERVICES_JSON="$STAGING_SERVICES"
-            ;;
-          "main")
-            ENVIRONMENT_CONFIG="$PRODUCTION_CONFIG"
-            ENVIRONMENT_DOMAIN="${{ inputs.production_domain }}"
-            ENVIRONMENT_NAME="${{ inputs.production_env }}"
-            SERVICES_JSON="$PRODUCTION_SERVICES"
-            ;;
-          *)
-            echo "❌ Unsupported branch: ${GITHUB_REF##*/}"
-            exit 1
-            ;;
-        esac
-
-        echo "config=$ENVIRONMENT_CONFIG" >> $GITHUB_OUTPUT
-        echo "domain=$ENVIRONMENT_DOMAIN" >> $GITHUB_OUTPUT
-        echo "environment=$ENVIRONMENT_NAME" >> $GITHUB_OUTPUT
-
-        # Handle monorepo vs polyrepo - maintain existing structure
-        if [[ "${{ inputs.monorepo }}" == "true" ]]; then
-          # Monorepo - convert to proper JSON matrix
-          MONOREPO_JSON=$(echo "$SERVICES_JSON" | jq -c .)
-
-          echo "matrix=$MONOREPO_JSON" >> $GITHUB_OUTPUT
-          echo "service=" >> $GITHUB_OUTPUT  # Empty for monorepo
-        else
-          # Polyrepo - its one service as the loader read it: the services
-          # file's entry, build options and all, or its name alone when the
-          # repository has no file. Empty means the entry's environments
-          # leave this one out. Nothing passed at all is the name alone.
-          if [[ -n "$SERVICES_JSON" ]]; then
-            SINGLE_SERVICE_JSON=$(echo "$SERVICES_JSON" | jq -c .)
-          else
-            SINGLE_SERVICE_JSON=$(jq -n --arg service "${{ inputs.service }}" '[{"name": $service}]')
-          fi
-
-          echo "matrix=$SINGLE_SERVICE_JSON" >> $GITHUB_OUTPUT
-          echo "service=${{ inputs.service }}" >> $GITHUB_OUTPUT
+        # Services per environment: the loader's map, else the two lists
+        # keyed by the environments' names.
+        if [[ -z "$SERVICES" && ( -n "$STAGING_SERVICES" || -n "$PRODUCTION_SERVICES" ) ]]; then
+          SERVICES=$(jq -cn --arg s "$STAGING_ENV" --arg p "$PRODUCTION_ENV" \
+            --argjson sv "${STAGING_SERVICES:-null}" --argjson pv "${PRODUCTION_SERVICES:-null}" \
+            '{} | if $sv != null then .[$s] = $sv else . end | if $pv != null then .[$p] = $pv else . end')
         fi
-
-    - name: Post Routing Debug
-      id: post-routing-debug
-      shell: bash
-      env:
-        CONFIG: ${{ steps.route.outputs.config }}
-        DOMAIN: ${{ steps.route.outputs.domain }}
-        ENVIRONMENT: ${{ steps.route.outputs.environment }}
-        MATRIX: ${{ steps.route.outputs.matrix }}
-        SERVICE: ${{steps.route.outputs.service }}
-      run: |
-        echo "[INFO] - Routing Configurations:"
-        echo "[INFO] - Config: $CONFIG"
-        echo "[INFO] - Domain: $DOMAIN"
-        echo "[INFO] - Environment: $ENVIRONMENT"
-        
-        if [[ ! "${{ inputs.monorepo }}" == "true" ]]; then
-          echo "[INFO] - 🎯 Regular Repo enabled!"
-          echo "[INFO] - Service: $SERVICE"
-        else
-          echo "[INFO] - 🏗️ Monorepo enabled!"
-          echo "[INFO] - Matrix:"
-          echo "$MATRIX" | jq
-        fi
-        
+        "$RUNNER_TEMP/waas" route --branch "$BRANCH" --environments "$ENVIRONMENTS" --services "$SERVICES" \
+          --monorepo="$MONOREPO" --service "$SERVICE" \
+          --staging-env "$STAGING_ENV" --staging-branch "$STAGING_BRANCH" \
+          --staging-domain "$STAGING_DOMAIN" --staging-config "$STAGING_CONFIG" \
+          --production-env "$PRODUCTION_ENV" --production-branch "$PRODUCTION_BRANCH" \
+          --production-domain "$PRODUCTION_DOMAIN" --production-config "$PRODUCTION_CONFIG"

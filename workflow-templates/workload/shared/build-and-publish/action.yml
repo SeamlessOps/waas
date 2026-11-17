@@ -65,6 +65,11 @@ inputs:
     required: false
     default: ''
 
+  dashboard_url:
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    required: false
+    default: ''
+
 outputs:
   status:
     description: 'The status of the Deployment'
@@ -253,4 +258,5 @@ runs:
         git_token: ${{ inputs.git_token }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        dashboard_url: ${{ inputs.dashboard_url }}
 
