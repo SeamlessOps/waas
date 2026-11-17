@@ -23,12 +23,16 @@ type Environment struct {
 	Domain string `json:"domain,omitempty"`
 	// BuildConfiguration is the build configuration (e.g. .NET's Release).
 	BuildConfiguration string `json:"build_configuration,omitempty"`
+	// Values is where the environment's services are written in the GitOps
+	// repository, over DefaultValues; nil, the default.
+	Values *Values `json:"-"`
 }
+type Environments []Environment
 
 // parseEnvironments reads metadata.environments, reporting problems through
 // add: each needs a name, names and branches are unique, and every field is
 // text.
-func parseEnvironments(v any, add func(string, ...any)) []Environment {
+func parseEnvironments(v any, add func(string, ...any)) Environments {
 	if v == nil {
 		return nil
 	}
@@ -37,7 +41,7 @@ func parseEnvironments(v any, add func(string, ...any)) []Environment {
 		add("metadata.environments must be a list")
 		return nil
 	}
-	var out []Environment
+	var out Environments
 	names, branches := map[string]bool{}, map[string]string{}
 	for i, it := range list {
 		obj, ok := it.(map[string]any)
@@ -57,6 +61,7 @@ func parseEnvironments(v any, add func(string, ...any)) []Environment {
 			return s
 		}
 		e := Environment{Name: text("name"), Branch: text("branch"), Domain: text("domain"), BuildConfiguration: text("build_configuration")}
+		e.Values = parseValues(fmt.Sprintf("metadata.environments[%d].values", i), obj["values"], add)
 		switch {
 		case e.Name == "":
 			add("metadata.environments[%d] is missing its name", i)
@@ -117,8 +122,8 @@ func (f *File) environment(name string) *Environment {
 // EnvironmentsFor are the environments repo deploys to, with the branch that
 // deploys to each: the repository's "branches" when it declares them (an
 // environment it doesn't map gets no branch), else the file's.
-func (f *File) EnvironmentsFor(repo string) []Environment {
-	out := append([]Environment(nil), f.Environments...)
+func (f *File) EnvironmentsFor(repo string) Environments {
+	out := append(Environments(nil), f.Environments...)
 	obj, _ := f.Repositories[repo].(map[string]any)
 	m, ok := obj["branches"].(map[string]any)
 	if !ok {
@@ -138,14 +143,14 @@ func (f *File) EnvironmentsFor(repo string) []Environment {
 // DefaultRoutes are the environments of a repository whose services file
 // declares none, or that has no file: dev deploys to staging and main to
 // production, each environment's name its domain, built as Release.
-var DefaultRoutes = []Environment{
+var DefaultRoutes = Environments{
 	{Name: "staging", Branch: "dev", Domain: "staging", BuildConfiguration: "Release"},
 	{Name: "production", Branch: "main", Domain: "production", BuildConfiguration: "Release"},
 }
 
 // defaultRoutes is a copy of DefaultRoutes, for a caller to keep.
-func defaultRoutes() []Environment {
-	return append([]Environment(nil), DefaultRoutes...)
+func defaultRoutes() Environments {
+	return append(Environments(nil), DefaultRoutes...)
 }
 
 // Route is where a push to a branch deploys.
@@ -159,7 +164,7 @@ type Route struct {
 }
 
 // RouteBranch finds the environment branch deploys to, in envs.
-func RouteBranch(envs []Environment, branch string) (Route, error) {
+func RouteBranch(envs Environments, branch string) (Route, error) {
 	if branch == "" {
 		return Route{}, fmt.Errorf("no branch to route")
 	}

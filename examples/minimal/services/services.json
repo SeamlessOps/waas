@@ -17,7 +17,8 @@
       "project_type": "dotnet",
       "service_type": "backend",
       "version": { "dotnet": "9.0.x" },
-      "branches": { "develop": "staging", "main": "production" }
+      "branches": { "develop": "staging", "main": "production" },
+      "values": { "image": { "repository": "image.repository", "tag": "image.tag" } }
     }
   },
   "services": [

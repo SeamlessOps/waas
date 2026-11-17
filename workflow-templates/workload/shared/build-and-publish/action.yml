@@ -64,6 +64,10 @@ inputs:
     required: false
     default: ''
 
+  gitops:
+    description: 'Where the image is written in the GitOps repository, as JSON: the "gitops" waas plan gives the service. Empty: the default'
+    required: false
+    default: ''
   dashboard_url:
     description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
@@ -281,6 +285,9 @@ runs:
       with:
         service: ${{ inputs.service }}
         image_tag: ${{ steps.build-and-publish.outputs.image_tag }}
+        image_repository: ${{ inputs.artifact_registry }}/${{ inputs.service }}
+        image_digest: ${{ steps.sign.outputs.digest_ref }}
+        target: ${{ inputs.gitops }}
         environment: ${{ inputs.environment }}
         git_token: ${{ inputs.git_token }}
         gitops_repo: ${{ inputs.gitops_repo }}

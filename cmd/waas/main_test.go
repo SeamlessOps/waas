@@ -50,7 +50,12 @@ func TestPlan_Outputs(t *testing.T) {
 	for k, want := range map[string]string{
 		"deploy": "true", "environment": "live", "domain": "l", "config": "Production",
 		"promote_from_environment": "staging", "promote_from_domain": "s",
-		"matrix": `[{"name":"a"}]`, "monorepo": "true", "staging-services": `[{"name":"a"},{"environments":["staging"],"name":"b"}]`,
+		// Each service carries where its image is written (gitops) and read for promotion (gitops_from).
+		"matrix": `[{` +
+			`"gitops":{"path":"environment/live","key":".\"services\".\"a-l\"","tag":".\"services\".\"a-l\".\"tag\""},` +
+			`"gitops_from":{"path":"environment/staging","key":".\"services\".\"a-s\"","tag":".\"services\".\"a-s\".\"tag\""},` +
+			`"name":"a"}]`,
+		"monorepo": "true", "staging-services": `[{"name":"a"},{"environments":["staging"],"name":"b"}]`,
 	} {
 		if got[k] != want {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
@@ -60,6 +65,35 @@ func TestPlan_Outputs(t *testing.T) {
 	t.Setenv("GITHUB_REF_NAME", "dev")
 	if got := outputs(t, "plan", "-f", file); got["environment"] != "staging" {
 		t.Errorf("from GITHUB_REF_NAME: %v", got["environment"])
+	}
+}
+
+func TestPlan_GitOpsSummary(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "s.json")
+	doc := `{"metadata": {"environments": [{"name": "live", "branch": "main", "domain": "l",
+	    "values": {"path": "clusters/{environment}/apps.yaml", "image": {"ref": "image"}}}]},
+	  "services": [{"name": "a"}, {"name": "b", "values": {"key": "apps.{name}", "image": {"repository": "image.repository", "tag": "image.tag", "digest": "image.digest"}}}]}`
+	if err := os.WriteFile(file, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary := filepath.Join(dir, "summary")
+	t.Setenv("GITHUB_OUTPUT", filepath.Join(dir, "out"))
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
+	if err := run([]string{"plan", "-f", file, "--branch", "main"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| `a` | `clusters/live/apps.yaml` | `services.a-l` | full image |",
+		"| `b` | `clusters/live/apps.yaml` | `apps.b` | repository, tag and digest |",
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("summary lacks %q:\n%s", want, raw)
+		}
 	}
 }
 

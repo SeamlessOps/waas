@@ -84,6 +84,16 @@ inputs:
     description: 'The source environment (e.g. staging)'
     required: false
     default: ''
+  gitops:
+    description: >-
+      Where the image is written in the GitOps repository, as JSON: the service's "gitops" from waas plan. Empty: the
+      tag alone at services.<service>.tag, in the one file under environment/<environment> that holds it
+    required: false
+    default: ''
+  promote_from_gitops:
+    description: "Where the image is read in promote_from_environment, as JSON: the service's \"gitops_from\" from waas plan. Empty: the default"
+    required: false
+    default: ''
 
   dashboard_url:
     description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
@@ -149,6 +159,8 @@ runs:
         source_service: ${{ inputs.promote_from_service }}
         source_environment: ${{ inputs.promote_from_environment }}
         environment: ${{ inputs.environment }}
+        target: ${{ inputs.gitops }}
+        source_target: ${{ inputs.promote_from_gitops }}
         artifact_registry: ${{ env.ARTIFACT_REGISTRY }}
         git_token: ${{ env.GIT_TOKEN }}
         gitops_repo: ${{ inputs.gitops_repo }}
@@ -166,6 +178,8 @@ runs:
       uses: rollwright/waas/workflow-templates/workload/shared/gitops-repo/confirm-image-tag@main
       with:
         image_tag: ${{ steps.image-tag.outputs.tag }}
+        image_repository: ${{ env.ARTIFACT_REGISTRY }}/${{ inputs.service }}
+        target: ${{ inputs.gitops }}
         service: ${{ inputs.service }}
         environment: ${{ inputs.environment }}
         git_token: ${{ env.GIT_TOKEN }}
@@ -278,6 +292,7 @@ runs:
         nx_project: ${{ inputs.nx_project }}
         project_type: ${{ inputs.project_type }}
         service: ${{ inputs.service }}
+        gitops: ${{ inputs.gitops }}
         github_packages: ${{ inputs.github_packages }}
         package_user: ${{ github.actor }}
         package_token: ${{ github.token }}

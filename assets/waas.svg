@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 96" role="img" aria-label="WaaS, Workflow as a Service">
+  <style>
+    .flow { fill: none; stroke: #0D9488; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+    .stage { fill: #0D9488; }
+    .object { fill: #0D9488; }
+    .wordmark { fill: #14213D; }
+    .subtitle { fill: #5B6475; }
+    @media (prefers-color-scheme: dark) {
+      .flow { stroke: #2DD4BF; }
+      .stage { fill: #2DD4BF; }
+      .object { fill: #2DD4BF; }
+      .wordmark { fill: #F0F3F6; }
+      .subtitle { fill: #A3ACBA; }
+    }
+  </style>
+
+  <!-- Mark: a push (open ring) through plan and deploy (stages) into a Kubernetes object (heptagon) -->
+  <g transform="translate(16 24)">
+    <!-- the pipeline -->
+    <path class="flow" d="M13 24 L62 24"/>
+    <circle class="flow" cx="7" cy="24" r="6"/>
+    <circle class="stage" cx="30" cy="24" r="5"/>
+    <circle class="stage" cx="50" cy="24" r="5"/>
+    <!-- arrowhead into the object -->
+    <path class="flow" d="M60 17 L66 24 L60 31"/>
+    <g transform="translate(84 24)">
+      <polygon class="object" points="0.00,-13.00 10.16,-8.11 12.67,2.89 5.64,11.71 -5.64,11.71 -12.67,2.89 -10.16,-8.11" stroke-linejoin="round"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <text class="wordmark" x="128" y="54"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="40" font-weight="700" letter-spacing="2">WaaS</text>
+  <text class="subtitle" x="130" y="74"
+        font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="10.5" font-weight="600" letter-spacing="1.2">WORKFLOW AS A SERVICE</text>
+</svg>

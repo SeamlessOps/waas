@@ -3,9 +3,13 @@
 // environment. It prints JSON, and inside GitHub Actions also sets the step's
 // outputs and summary.
 //
-//	waas validate -f services.json
-//	waas plan -f services/shop.json --catalog services/services.json --repository shop --branch dev
-//	waas matrix -f services/shop.json --catalog services/services.json --repository shop
+//	waas validate -f services
+//	waas plan -f services/shop --catalog services/services --repository shop --branch dev
+//	waas matrix -f services/shop --catalog services/services --repository shop
+//
+// A services file is YAML (.yaml, .yml) or JSON (.json), and a path may leave
+// the extension off: "services" is services.yaml, services.yml or
+// services.json, whichever exists.
 package main
 
 import (
@@ -68,12 +72,9 @@ func run(args []string, stdout io.Writer) error {
 
 func validate(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
-	file := fs.String("f", "", "services file (required)")
+	file := fs.String("f", "services", "services file, YAML or JSON; the extension may be left off")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *file == "" {
-		return errors.New("validate: -f is required")
 	}
 	f, err := services.Load(*file)
 	if err != nil {
@@ -86,8 +87,8 @@ func validate(args []string, stdout io.Writer) error {
 // requestFlags are the flags saying which repository asks, and where its
 // services file is.
 func requestFlags(fs *flag.FlagSet, r *services.Request) {
-	fs.StringVar(&r.File, "f", "", "the repository's services file; it need not exist")
-	fs.StringVar(&r.Catalog, "catalog", "", "shared services file a repository without its own is looked up in")
+	fs.StringVar(&r.File, "f", "", "the repository's services file, YAML or JSON, the extension optional; it need not exist")
+	fs.StringVar(&r.Catalog, "catalog", "", "shared services file, YAML or JSON, a repository without its own is looked up in")
 	fs.StringVar(&r.Repository, "repository", repositoryName(), "the repository's name, looked up in the catalog (default: this repository, inside Actions)")
 	fs.StringVar(&r.Service, "service", "", "the service a polyrepo deploys as")
 	fs.BoolVar(&r.Monorepo, "monorepo", true, "the repository deploys several services")
@@ -251,7 +252,54 @@ func planSummary(branch string, p *services.Plan) string {
 	for _, r := range rows {
 		fmt.Fprintf(&b, "| %s | %s |\n", r[0], r[1])
 	}
+	b.WriteString(gitopsSummary(p.Services))
 	return b.String()
+}
+
+// gitopsSummary is where each service's image is written: the values file
+// (or the directory it is found in), the service's key, and the fields.
+// "" when no service deploys.
+func gitopsSummary(entries services.Entries) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n### GitOps\n\n| Service | Values | Key | Writes |\n|---|---|---|---|\n")
+	for _, e := range entries {
+		t, ok := e["gitops"].(services.Target)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | %s |\n", e.Name(), t.Path, dotted(t.Key), writes(t))
+	}
+	return b.String()
+}
+
+// writes says which image fields t writes: "tag", "repository and tag" or
+// "full image", with the digest listed last when it writes that too.
+func writes(t services.Target) string {
+	var parts []string
+	switch {
+	case t.Ref != "":
+		parts = append(parts, "full image")
+	case t.Repository != "":
+		parts = append(parts, "repository", "tag")
+	case t.Tag != "":
+		parts = append(parts, "tag")
+	}
+	if t.Digest != "" {
+		parts = append(parts, "digest")
+	}
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
+// dotted is a yq path as the services file writes it:
+// ."services"."api-staging" is services.api-staging.
+func dotted(yq string) string {
+	return strings.ReplaceAll(strings.Trim(strings.TrimPrefix(yq, "."), `"`), `"."`, ".")
 }
 
 // count is n and noun, plural unless n is 1: "1 service", "3 services".
@@ -278,7 +326,7 @@ func splitList(s string) []string {
 	return out
 }
 
-func sortedKeys(m map[string][]services.Entry) []string {
+func sortedKeys(m map[string]services.Entries) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
