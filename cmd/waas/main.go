@@ -79,7 +79,7 @@ func validate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "✅ %s: %d services, %d environments\n", f.Path, len(f.Services), len(f.Environments))
+	fmt.Fprintf(stdout, "✅ %s: %s, %s\n", f.Path, count(len(f.Services), "service"), count(len(f.Environments), "environment"))
 	return nil
 }
 
@@ -138,12 +138,7 @@ func plan(args []string, stdout io.Writer) error {
 	if err := actions.Output(outs...); err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("## Plan\n\n`%s` deploys nowhere: no environment takes this branch.\n", *branch)
-	if p.Deploy {
-		summary = fmt.Sprintf("## Plan\n\n`%s` deploys %d services from `%s` to **%s** (domain `%s`, build configuration `%s`); images are %s.\n",
-			*branch, len(p.Services), sourceOf(p.Matrix), p.Name, p.Domain, p.BuildConfiguration, p.Signing)
-	}
-	if err := actions.Summary(summary); err != nil {
+	if err := actions.Summary(planSummary(*branch, p)); err != nil {
 		return err
 	}
 	return printJSON(stdout, p)
@@ -199,7 +194,7 @@ func matrix(args []string, stdout io.Writer) error {
 	}
 
 	outs := matrixOutputs(m)
-	summary := fmt.Sprintf("## Services\n\n%d from `%s`\n\n| Environment | Services |\n|---|---|\n", len(m.All), sourceOf(m))
+	summary := fmt.Sprintf("## Services\n\n%s from `%s`\n\n| Environment | Services |\n|---|---|\n", count(len(m.All), "service"), sourceOf(m))
 	for _, env := range sortedKeys(m.Environments) {
 		summary += fmt.Sprintf("| %s | %d |\n", env, len(m.Environments[env]))
 	}
@@ -217,6 +212,54 @@ func matrix(args []string, stdout io.Writer) error {
 func repositoryName() string {
 	full := os.Getenv("GITHUB_REPOSITORY")
 	return full[strings.LastIndex(full, "/")+1:]
+}
+
+// planSummary is the plan as a small table: where the branch deploys, what,
+// and how the images are signed.
+func planSummary(branch string, p *services.Plan) string {
+	if !p.Deploy {
+		return fmt.Sprintf("## Plan\n\n`%s` deploys nowhere: no environment takes this branch.\n", branch)
+	}
+	names := make([]string, 0, len(p.Services))
+	for _, e := range p.Services {
+		names = append(names, "`"+e.Name()+"`")
+	}
+	promote := "none"
+	if p.PromoteFrom != nil {
+		promote = p.PromoteFrom.Name
+	}
+	signing := "not signed"
+	switch {
+	case p.Signing == nil:
+	case p.Signing.Key != "":
+		signing = "signed with a key"
+	default:
+		signing = "signed keyless"
+	}
+	rows := [][2]string{
+		{"Branch", "`" + branch + "`"},
+		{"Environment", p.Name},
+		{"Domain", "`" + p.Domain + "`"},
+		{"Build configuration", p.BuildConfiguration},
+		{count(len(p.Services), "service"), strings.Join(names, ", ")},
+		{"Promotes from", promote},
+		{"Images", signing},
+		{"Services file", "`" + sourceOf(p.Matrix) + "`"},
+	}
+	var b strings.Builder
+	b.WriteString("## Plan\n\n| | |\n|---|---|\n")
+	for _, r := range rows {
+		fmt.Fprintf(&b, "| %s | %s |\n", r[0], r[1])
+	}
+	return b.String()
+}
+
+// count is n and noun, plural unless n is 1: "1 service", "3 services".
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func printJSON(w io.Writer, v any) error {

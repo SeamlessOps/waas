@@ -8,9 +8,8 @@ inputs:
     description: 'Service directory to build. Used in --build-arg $SERVICE_DIR'
     required: false
   image_tag:
-    description: 'New image tag to build and publish'
-    required: false
-    default: 'build-${GITHUB_RUN_NUMBER}-sha-${GITHUB_SHA::7}'
+    description: 'The image tag to build and publish'
+    required: true
   nx_project:
     description: 'Name of the Nx project to build. Used in --build-arg $NX_PROJECT'
     required: false
@@ -66,7 +65,7 @@ inputs:
     default: ''
 
   dashboard_url:
-    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
     default: ''
   signing_key:
@@ -268,6 +267,7 @@ runs:
     # Signed before its tag is written: an image that can't be signed never
     # lands in the GitOps repository.
     - name: Sign the image
+      id: sign
       uses: rollwright/waas/workflow-templates/shared/sign-image@main
       with:
         image: ${{ steps.build-and-publish.outputs.image_uri }}
@@ -280,10 +280,11 @@ runs:
       uses: rollwright/waas/workflow-templates/workload/shared/gitops-repo/update-image-tag@main
       with:
         service: ${{ inputs.service }}
-        image_tag: ${{ inputs.image_tag }}
+        image_tag: ${{ steps.build-and-publish.outputs.image_tag }}
         environment: ${{ inputs.environment }}
         git_token: ${{ inputs.git_token }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        result: ${{ steps.sign.outputs.signed == 'true' && 'built and signed' || 'built' }}
         dashboard_url: ${{ inputs.dashboard_url }}
 

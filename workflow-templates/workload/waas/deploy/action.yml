@@ -86,7 +86,7 @@ inputs:
     default: ''
 
   dashboard_url:
-    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
     default: ''
   signing_key:
@@ -134,6 +134,12 @@ runs:
         vault_role: ${{ inputs.vault_role }}
         vault_secret_path: ${{ inputs.vault_secret_path }}
 
+    # The run's image tag, worked out once: every step below uses this value.
+    - name: Image tag
+      id: image-tag
+      shell: bash
+      run: echo "tag=build-$GITHUB_RUN_NUMBER-sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
     - name: Promote the source environment's image
       id: promote
       if: inputs.promote == 'true' && inputs.promote_from_service != '' && inputs.promote_from_environment != ''
@@ -159,6 +165,7 @@ runs:
       if: steps.promote.outputs.promoted != 'true'
       uses: rollwright/waas/workflow-templates/workload/shared/gitops-repo/confirm-image-tag@main
       with:
+        image_tag: ${{ steps.image-tag.outputs.tag }}
         service: ${{ inputs.service }}
         environment: ${{ inputs.environment }}
         git_token: ${{ env.GIT_TOKEN }}
@@ -253,6 +260,7 @@ runs:
         steps.validate-project-type.outputs.valid-project-type == 'true'
       uses: rollwright/waas/workflow-templates/workload/shared/build-and-publish@main
       with:
+        image_tag: ${{ steps.image-tag.outputs.tag }}
         artifact_registry: ${{ env.ARTIFACT_REGISTRY }}
         build_configuration: ${{ inputs.build_configuration }}
         directory: ${{ inputs.directory }}

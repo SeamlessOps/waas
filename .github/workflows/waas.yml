@@ -48,7 +48,7 @@ on:
         type: boolean
         default: true
       dashboard_url:
-        description: "Link to a deployment in the GitOps controller (e.g. Argo CD), {environment} replaced; shown in the run's summary. Empty: no link"
+        description: "Link to a deployment in the GitOps controller (e.g. Argo CD), shown in the run's summary; {environment} and {app} (the service's values file, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
         required: false
         type: string
         default: ''
