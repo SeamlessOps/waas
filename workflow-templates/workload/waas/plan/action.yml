@@ -173,7 +173,7 @@ runs:
           echo "- Provide vault credentials as inputs" >> $GITHUB_STEP_SUMMARY
           echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
           echo '```yaml' >> $GITHUB_STEP_SUMMARY
-          echo "uses: rollwright/waas/workflow-templates/workload/waas/plan@main" >> $GITHUB_STEP_SUMMARY
+          echo "uses: rollwright/waas/workflow-templates/workload/waas/plan@v0" >> $GITHUB_STEP_SUMMARY
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  vault_addr: '<VAULT_ADDR>'" >> $GITHUB_STEP_SUMMARY
           echo "  vault_role: '<VAULT_ROLE>'" >> $GITHUB_STEP_SUMMARY
@@ -187,7 +187,7 @@ runs:
           echo "- Set \`load_default\` to false and provide your own \`services_dir\` and \`services_file\`" >> $GITHUB_STEP_SUMMARY
           echo "- Follow the example shown below:" >> $GITHUB_STEP_SUMMARY
           echo '```yaml' >> $GITHUB_STEP_SUMMARY
-          echo "uses: rollwright/waas/workflow-templates/workload/waas/plan@main" >> $GITHUB_STEP_SUMMARY
+          echo "uses: rollwright/waas/workflow-templates/workload/waas/plan@v0" >> $GITHUB_STEP_SUMMARY
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  load_default: false" >> $GITHUB_STEP_SUMMARY
           echo "  services_dir: '<path-to-services-dir>'" >> $GITHUB_STEP_SUMMARY

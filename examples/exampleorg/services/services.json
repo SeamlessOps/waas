@@ -1,0 +1,211 @@
+{
+  "metadata": {
+    "description": "Every repository's services, one entry per service",
+    "notes": [
+      "A repository is looked up here by its name (\"repository\"); its calling workflow needs no services file of its own",
+      "One entry for a repository deploys as a polyrepo under the entry's \"name\"; several deploy as a monorepo",
+      "\"name\" is what a service deploys as (the <name>-<domain> values key and image)",
+      "requires lists the platform services it needs; their wiring is in the GitOps values and ExternalSecrets",
+      "\"repositories\" holds a repository's defaults, merged under each of its entries; an entry's own fields win, and \"version\" merges key by key",
+      "Build options per entry or repository: project_type, service_type, version {dotnet, node}, directory, nx_project (defaults to name), dockerfile, docker_target, environments"
+    ],
+    "maintainer": "platform-team",
+    "default_environments": [
+      "staging",
+      "production"
+    ],
+    "signing": {
+      "key": "gcpkms://projects/my-gcp-project/locations/global/keyRings/image-signing/cryptoKeys/images"
+    },
+    "environments": [
+      {
+        "name": "staging",
+        "branch": "dev",
+        "domain": "exampleorg-dev",
+        "build_configuration": "Release"
+      },
+      {
+        "name": "production",
+        "branch": "main",
+        "domain": "exampleorg-ng",
+        "build_configuration": "Production"
+      }
+    ]
+  },
+  "repositories": {
+    "exampleorg": {
+      "project_type": ".net",
+      "service_type": "backend",
+      "version": {
+        "dotnet": "10.0.x"
+      },
+      "requires": [
+        "mongodb"
+      ]
+    },
+    "exampleorg-frontend": {
+      "project_type": "nx",
+      "service_type": "frontend",
+      "version": {
+        "node": "24.18.x"
+      }
+    }
+  },
+  "services": [
+    {
+      "repository": "exampleorg",
+      "name": "api",
+      "directory": "exampleorg.api"
+    },
+    {
+      "repository": "exampleorg",
+      "name": "hangfire",
+      "directory": "HangFire.Services"
+    },
+    {
+      "repository": "exampleorg",
+      "name": "wallets",
+      "directory": "wallet.api"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "account"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "admin"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "agency"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "airline"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "csbt"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "hotel"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "merchant"
+    },
+    {
+      "repository": "exampleorg-frontend",
+      "name": "planner"
+    },
+    {
+      "repository": "exampleorg.identity",
+      "name": "identity",
+      "service_type": "backend",
+      "directory": "exampleorg.identity",
+      "requires": [
+        "postgres",
+        "rabbitmq",
+        "mongodb",
+        "gcs"
+      ],
+      "project_type": ".net",
+      "version": {
+        "dotnet": "10.0.x"
+      }
+    },
+    {
+      "repository": "exampleorg.airlinegds",
+      "name": "airlinegds",
+      "service_type": "backend",
+      "project_type": "generic",
+      "docker_target": "api",
+      "requires": [
+        "postgres",
+        "redis"
+      ],
+      "notes": "The GDS API over Crane and Videcom; its Dockerfile's api stage. Staging runs the sandbox deployment"
+    },
+    {
+      "repository": "exampleorg-gateway",
+      "name": "gateway",
+      "service_type": "backend",
+      "project_type": "generic",
+      "requires": [],
+      "notes": "The YARP entry point, on its own host gateway.exampleorg.dev"
+    },
+    {
+      "repository": "exampleorg.admin",
+      "name": "adminapi",
+      "service_type": "backend",
+      "project_type": "generic",
+      "requires": [
+        "postgres",
+        "rabbitmq",
+        "mongodb"
+      ],
+      "notes": "Admin, notification and audit in one host; adminapi because admin-exampleorg-dev is the admin frontend"
+    },
+    {
+      "repository": "exampleorg.paymentgateway",
+      "name": "paymentgateway",
+      "service_type": "backend",
+      "project_type": "generic",
+      "requires": [
+        "mongodb"
+      ],
+      "notes": "Payment providers behind one contract; webhooks off in staging"
+    },
+    {
+      "repository": "exampleorg.booking",
+      "name": "booking",
+      "service_type": "backend",
+      "project_type": "generic",
+      "requires": [
+        "postgres"
+      ],
+      "notes": "The gateway's /flights and /hotels; its own PostgreSQL database, migrated at startup"
+    },
+    {
+      "repository": "exampleorg.vas",
+      "name": "vas",
+      "service_type": "backend",
+      "project_type": "generic",
+      "requires": [
+        "mongodb"
+      ],
+      "notes": "The gateway's /vas; every purchase off by default"
+    },
+    {
+      "repository": "exampleorg.hotelgds",
+      "name": "hotelgds",
+      "service_type": "backend",
+      "project_type": "generic",
+      "notes": "booking's /hotels/v1 (sandbox in staging); one replica: bookings are in memory"
+    },
+    {
+      "repository": "exampleorg-external-gateway",
+      "name": "external-gateway",
+      "service_type": "backend",
+      "directory": "exampleorg.externalgateway",
+      "project_type": ".net",
+      "version": {
+        "dotnet": "10.0.x"
+      },
+      "notes": "The agencies' entry point: api.<domain>/flights and /hotels, forwarded to booking after identity checks the key"
+    },
+    {
+      "repository": "exampleorg.wallet",
+      "name": "wallet",
+      "service_type": "backend",
+      "project_type": "generic",
+      "requires": [
+        "postgres",
+        "rabbitmq",
+        "mongodb"
+      ],
+      "notes": "Replaces wallet.api through staged switches; its staging entry stays disabled until then"
+    }
+  ]
+}

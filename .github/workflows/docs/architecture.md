@@ -1,4 +1,4 @@
-# WaaS architecture
+# Architecture
 
 How a deployment moves through WaaS, from the calling workflow to the GitOps repository, Slack and the dashboard. The [README](../../../README.md) covers how to use it.
 

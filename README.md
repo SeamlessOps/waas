@@ -6,7 +6,7 @@ It also has a workflow for Terraform: lint, security scans, plan and apply.
 
 ## How a deployment runs
 
-[WAAS.md](.github/workflows/docs/WAAS.md) shows the architecture and the flow in diagrams.
+[The architecture](.github/workflows/docs/architecture.md) shows how a deployment flows, in diagrams.
 
 The workload workflow, [`.github/workflows/waas.yml`](.github/workflows/waas.yml), runs in four stages; a push from a merged pull request deploys, and its branch decides the environment:
 
@@ -35,7 +35,7 @@ on:
 
 jobs:
   deploy:
-    uses: rollwright/waas/.github/workflows/waas.yml@main
+    uses: rollwright/waas/.github/workflows/waas.yml@v0
     with:
       project_type: dotnet
     permissions:
@@ -48,7 +48,7 @@ The repository needs the secrets `VAULT_ADDR`, `VAULT_ROLE` and `VAULT_SECRET_PA
 
 An organization can also keep its own copy of `waas.yml` in its GitOps repository, with its own defaults, and have its service repositories call that. The copy uses WaaS's actions as they are.
 
-WaaS has no releases yet; workflows and actions are referenced at `@main`.
+Reference a release: `@v0` follows the latest `v0.x.y`, or pin an exact version such as `@v0.1.0`. [Releases](https://github.com/rollwright/waas/releases) lists them.
 
 ### Inputs
 
@@ -108,7 +108,7 @@ A services file lists what a repository deploys. It lives in the GitOps reposito
 - The order is the promotion path: an environment can promote the image the one before it built.
 - A repository whose branches differ maps its own in `repositories.<repository>.branches`, an object of branch to environment: `{ "develop": "staging", "main": "production" }`. It replaces the file's branches for that repository; an environment it doesn't map gets nothing from it.
 
-Without `metadata.environments`, or without a services file, there are two: staging on `dev` and production on `main`, each named as its domain and built as `Release`. [`clients/example`](clients/example) has a complete file.
+Without `metadata.environments`, or without a services file, there are two: staging on `dev` and production on `main`, each named as its domain and built as `Release`. [`examples`](examples/) has complete files.
 
 ### Repositories
 
@@ -173,7 +173,7 @@ Inside GitHub Actions, each also sets the step's outputs and summary.
 Each release publishes the CLI's binaries for Linux and macOS (amd64, arm64) with signed checksums. The actions get it through [`setup-waas`](workflow-templates/shared/setup-waas), which downloads the binary for the runner, verifies the checksums' signature (made by this repository's release workflow, at a version tag) and the binary, and puts `waas` on `PATH`; `version` pins a release, and the default is the latest. To use it in your own workflow:
 
 ```yaml
-- uses: rollwright/waas/workflow-templates/shared/setup-waas@main
+- uses: rollwright/waas/workflow-templates/shared/setup-waas@v0
 - run: waas validate -f services/services.json
 ```
 
@@ -181,12 +181,12 @@ Each release publishes the CLI's binaries for Linux and macOS (amd64, arm64) wit
 
 | Path | Contents |
 |---|---|
-| `.github/workflows/` | The reusable workflows: `waas.yml` (workloads), `iac-workflow-as-a-service.yml` (Terraform); `docs/WAAS.md`, the architecture |
+| `.github/workflows/` | The reusable workflows: `waas.yml` (workloads), `iac-workflow-as-a-service.yml` (Terraform); `docs/architecture.md` |
 | `workflow-templates/workload/` | Workload actions: loading services, routing, deploying, project templates, GitOps updates, metrics |
 | `workflow-templates/infrastructure/` | Terraform actions: setup, plan, apply, security scans |
 | `workflow-templates/shared/` | `setup-waas`, `sign-image` and `verify-image` (cosign), Vault and gcloud authentication, Slack, pull request checks |
 | `cmd/`, `internal/`, `Makefile` | The `waas` CLI and its build |
-| `clients/` | Example caller workflows and services files |
+| `examples/` | A minimal setup, and a real platform's workflow and catalog |
 
 ## Development
 

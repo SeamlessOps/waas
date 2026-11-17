@@ -1,0 +1,245 @@
+name: GitOps Workflow as a Service (Unified WaaS)
+
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: 'Dry run mode'
+        required: false
+        type: boolean
+        default: false
+      project_type:
+        description: 'Project type (dotnet, nx, node, python, generic, etc). A service in the services file can set its own "project_type"'
+        required: false
+        type: string
+        default: 'generic'
+      dotnet_version:
+        description: '.Net version. A service in the services file can set its own in "version": {"dotnet": ...}'
+        required: false
+        type: string
+        default: '9.0.x'
+      node_version:
+        description: 'Node.js version. A service in the services file can set its own in "version": {"node": ...}'
+        required: false
+        type: string
+        default: '22.14.x'
+      service_type:
+        description: 'Service type (frontend or backend). A service in the services file can set its own "service_type"'
+        required: false
+        default: 'unknown'
+        type: string
+      services_file:
+        description: 'JSON file containing service definitions.'
+        required: false
+        type: string
+        default: '${{ github.event.repository.name }}.json'
+      services_catalog:
+        description: >-
+          Shared services file, in services_dir. A repository without its own services file is looked up here by its
+          name: one entry deploys as a polyrepo under the entry's "name", several as a monorepo, and each entry
+          carries its build options, so the calling workflow needs no inputs.
+        required: false
+        type: string
+        default: 'services.json'
+      services_dir:
+        description: 'Directory containing service files'
+        required: false
+        type: string
+        default: '.github/workflows/services'
+      load_default:
+        description: 'Decide to load from default service_dir or custom one'
+        required: false
+        type: boolean
+        default: true
+      gitops_repo:
+        description: 'GitOps repository URL'
+        required: false
+        type: string
+        default: 'ExampleOrg/exampleorg-products.git'
+      git_ref:
+        description: 'The GitOps branch to use'
+        required: false
+        type: string
+        default: 'main'
+      dockerfile:
+        description: 'Dockerfile path for image building. A service in the services file can set its own "dockerfile"'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      docker_target:
+        description: 'Dockerfile stage to build (--target). Empty builds the last stage. A service in the services file can set its own "docker_target"'
+        required: false
+        type: string
+        default: ''
+      github_packages:
+        description: >-
+          Give the restore and the image build read access to the organisation's GitHub Packages, with the caller's
+          GITHUB_TOKEN (grant "packages: read" in the calling job). The image build gets the build secrets
+          "github_token" and "nuget_auth" (NuGet's credential format).
+        required: false
+        type: boolean
+        default: false
+      nuget_sources:
+        description: 'Comma-separated nuget.config source keys that are GitHub Packages feeds (with github_packages)'
+        required: false
+        type: string
+        default: ''
+      promote:
+        description: >-
+          Production deploys promote staging's image when it is the code being merged, instead of building it again.
+          A service in the services file can set "promote": false
+        required: false
+        type: boolean
+        default: true
+      monorepo:
+        description: 'Monorepo identifier'
+        required: false
+        type: boolean
+        default: true
+      service:
+        description: 'Service name for a polyrepo: its entry in the services file, if it has one, and the name it deploys as'
+        required: false
+        type: string
+        default: ${{ github.event.repository.name }}
+      dashboard_url:
+        description: "Link to a deployment in Argo CD, {environment} replaced; shown in the run's summary"
+        required: false
+        type: string
+        default: 'https://argocd.exampleorg.com/applications/exampleorg-argocd/exampleorg-products-{app}-{environment}'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ----------------------------------------
+  # Step 1: PR Validation and Security Scan
+  # ----------------------------------------
+  validate:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR Branch Rules
+        id: validate
+        uses: rollwright/waas/workflow-templates/shared/validate-pull-request@v0
+
+  # -----------------------------
+  # Step 2: Plan
+  # -----------------------------
+  plan:
+    if: >
+      contains(github.event.head_commit.message, 'Merge pull request #')
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.plan.outputs.deploy }}
+      environment: ${{ steps.plan.outputs.environment }}
+      domain: ${{ steps.plan.outputs.domain }}
+      config: ${{ steps.plan.outputs.config }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      promote_from_environment: ${{ steps.plan.outputs.promote_from_environment }}
+      promote_from_domain: ${{ steps.plan.outputs.promote_from_domain }}
+      signing_key: ${{ steps.plan.outputs.signing_key }}
+      signing_keyless: ${{ steps.plan.outputs.signing_keyless }}
+      signing_identity: ${{ steps.plan.outputs.signing_identity }}
+      signing_issuer: ${{ steps.plan.outputs.signing_issuer }}
+    steps:      
+      - name: Plan
+        id: plan
+        uses: rollwright/waas/workflow-templates/workload/waas/plan@v0
+        with:
+          monorepo: ${{ inputs.monorepo }}
+          service: ${{ inputs.service }}
+          services_file: ${{ inputs.services_file }}
+          catalog_file: ${{ inputs.services_catalog }}
+          services_dir: ${{ inputs.services_dir }}
+          load_default: ${{ inputs.load_default }}
+          gitops_repo: ${{ inputs.gitops_repo }}
+          git_ref: ${{ inputs.git_ref }}
+          project_type: ${{ inputs.project_type }}
+          vault_addr: ${{ secrets.VAULT_ADDR }}
+          vault_role: ${{ secrets.VAULT_ROLE }}
+          vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
+
+  # --------------------------
+  # Step 3: Dynamic Deployment
+  # --------------------------
+  deploy:
+    name: deploy-${{ needs.plan.outputs.environment }} (${{ matrix.service.name }})
+    needs: [plan]
+    environment: ${{ needs.plan.outputs.environment }}
+    runs-on: ubuntu-latest
+    if: inputs.dry-run == false && needs.plan.outputs.deploy == 'true'
+    env:
+      PROJECT_TYPE: ${{ matrix.service.project_type || inputs.project_type }}
+      SERVICE_TYPE: ${{ matrix.service.service_type || inputs.service_type }}
+      DOTNET_VERSION: ${{ matrix.service.version.dotnet || inputs.dotnet_version }}
+      NODE_VERSION: ${{ matrix.service.version.node || inputs.node_version }}
+      CONFIG: ${{ needs.plan.outputs.config }}
+      DIRECTORY: ${{ matrix.service.directory }}
+      DOMAIN: ${{ needs.plan.outputs.domain }}
+      ENVIRONMENT: ${{ needs.plan.outputs.environment }}
+      SERVICE: ${{ matrix.service.name }}
+      NX_PROJECT: ${{ matrix.service.nx_project || matrix.service.name }}
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.plan.outputs.matrix) }}
+      fail-fast: false
+    outputs:
+      duration: ${{ steps.deploy.outputs.duration }}
+      no-changes: ${{ steps.deploy.outputs.no-changes }}
+      environment: ${{ env.ENVIRONMENT }}
+      service: ${{ env.SERVICE }}
+    steps:
+      - name: Deploy ${{ env.SERVICE }} to ${{ env.ENVIRONMENT }}
+        id: deploy
+        uses: rollwright/waas/workflow-templates/workload/waas/deploy@v0
+        with:
+          build_configuration: ${{ env.CONFIG }}
+          environment: ${{ env.ENVIRONMENT }}
+          directory: ${{ env.DIRECTORY}}
+          dotnet_version: ${{ env.DOTNET_VERSION }}
+          node_version: ${{ env.NODE_VERSION }}
+          dockerfile: ${{ matrix.service.dockerfile || inputs.dockerfile }}
+          docker_target: ${{ matrix.service.docker_target || inputs.docker_target }}
+          nx_project: ${{ env.NX_PROJECT }}
+          gitops_repo: ${{ inputs.gitops_repo }}
+          git_ref: ${{ inputs.git_ref }}
+          project_type: ${{ env.PROJECT_TYPE }}
+          service: ${{ env.SERVICE }}-${{ env.DOMAIN }}
+          service_type: ${{ env.SERVICE_TYPE }}
+          dashboard_url: ${{ inputs.dashboard_url }}
+          signing_key: ${{ needs.plan.outputs.signing_key }}
+          signing_keyless: ${{ needs.plan.outputs.signing_keyless }}
+          signing_identity: ${{ needs.plan.outputs.signing_identity }}
+          signing_issuer: ${{ needs.plan.outputs.signing_issuer }}
+          github_packages: ${{ inputs.github_packages }}
+          nuget_sources: ${{ inputs.nuget_sources }}
+          promote: ${{ inputs.promote && matrix.service.promote != false }}
+          promote_from_service: ${{ needs.plan.outputs.promote_from_environment != '' && format('{0}-{1}', env.SERVICE, needs.plan.outputs.promote_from_domain) || '' }}
+          promote_from_environment: ${{ needs.plan.outputs.promote_from_environment }}
+          vault_addr: ${{ secrets.VAULT_ADDR }}
+          vault_role: ${{ secrets.VAULT_ROLE }}
+          vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
+
+  # ----------------------------
+  # Step 4: Slack Notification
+  # ----------------------------
+  notify:
+    needs: [plan, deploy]
+    name: notify-slack
+    runs-on: ubuntu-latest
+    if: >
+      always() && inputs.dry-run == false && needs.plan.outputs.deploy == 'true' &&
+      github.event_name != 'pull_request' && 
+      needs.deploy.outputs.no-changes != 'true' 
+    steps:
+      - name: Notify Slack
+        id: slack-notify
+        uses: rollwright/waas/workflow-templates/shared/slack-notify@v0
+        with:
+          workflow_type: workload
+          service: ${{ github.event.repository.name }}
+          environment: ${{ needs.deploy.outputs.environment }}
+          status: ${{ needs.deploy.result }}
+          needs_result: ${{ needs.deploy.result }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY }}

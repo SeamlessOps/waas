@@ -7,7 +7,7 @@ on:
 
 jobs:
   deploy:
-    uses: rollwright/waas/.github/workflows/waas.yml@main
+    uses: rollwright/waas/.github/workflows/waas.yml@v0
     with:
       project_type: nx
       # Where the services file lives, in the GitOps repository.

@@ -126,7 +126,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy to staging
-        uses: rollwright/waas/workflow-templates/workload/templates/general-purpose@main
+        uses: rollwright/waas/workflow-templates/workload/waas/deploy@v0
         with:
           service: identity-production
           environment: staging
