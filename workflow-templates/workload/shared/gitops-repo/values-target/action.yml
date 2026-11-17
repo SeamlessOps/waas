@@ -1,0 +1,154 @@
+name: 'GitOps Values Target'
+description: >-
+  Checks out the GitOps values for one service and finds where its image is written: the values file, and the yq
+  paths of the fields. The target is what waas plan gives each service ("gitops", or "gitops_from" for the
+  environment it promotes from). Empty: the default, the tag alone at services.<service>.tag, in the one file under
+  environment/<environment> that holds the service.
+
+inputs:
+  target:
+    description: 'The target as JSON: {"path", "key", "tag", "repository", "ref", "digest"}. Empty or null: the default'
+    required: false
+    default: ''
+  service:
+    description: "The service's values key (e.g. api-staging), for the default target"
+    required: true
+  environment:
+    description: 'The environment, for the default target'
+    required: true
+  git_token:
+    description: 'Token to read the GitOps repository'
+    required: true
+  gitops_repo:
+    description: 'GitOps repository'
+    required: false
+    default: 'rollwright/products.git'
+  git_ref:
+    description: 'GitOps branch'
+    required: false
+    default: 'main'
+  checkout_path:
+    description: 'Where to check the GitOps repository out, relative to the workspace'
+    required: false
+    default: '.'
+  must_exist:
+    description: "'true': fail unless exactly one values file holds the service. 'false': output found=false instead"
+    required: false
+    default: 'true'
+
+outputs:
+  found:
+    description: "'true' when exactly one values file holds the service"
+    value: ${{ steps.find.outputs.found }}
+  file:
+    description: 'The values file, relative to the GitOps repository'
+    value: ${{ steps.find.outputs.file }}
+  key:
+    description: "The service's yq path in the file"
+    value: ${{ steps.target.outputs.key }}
+  tag:
+    description: 'yq path of the image tag; empty: not written'
+    value: ${{ steps.target.outputs.tag }}
+  repository:
+    description: 'yq path of the image repository; empty: not written'
+    value: ${{ steps.target.outputs.repository }}
+  ref:
+    description: 'yq path of the full image, repository:tag; empty: not written'
+    value: ${{ steps.target.outputs.ref }}
+  digest:
+    description: 'yq path of the image digest; empty: not written'
+    value: ${{ steps.target.outputs.digest }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve the target
+      id: target
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        SERVICE: ${{ inputs.service }}
+        ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        set -euo pipefail
+        segment='[A-Za-z0-9_-]+'
+        if [[ -z "$TARGET" || "$TARGET" == "null" ]]; then
+          for v in "$SERVICE" "$ENVIRONMENT"; do
+            [[ "$v" =~ ^$segment$ ]] || { echo "::error::'$v' is not a plain name"; exit 1; }
+          done
+          path="environment/$ENVIRONMENT"
+          key=".\"services\".\"$SERVICE\""
+          tag="$key.\"tag\""; repository=""; ref=""; digest=""
+        else
+          field() { jq -r --arg f "$1" '.[$f] // ""' <<<"$TARGET"; }
+          path=$(field path); key=$(field key); tag=$(field tag)
+          repository=$(field repository); ref=$(field ref); digest=$(field digest)
+        fi
+
+        # waas plan checks these; check again, since they become yq expressions and paths.
+        [[ "$path" =~ ^[A-Za-z0-9_./-]+$ && "$path" != /* && "/$path/" != */../* ]] \
+          || { echo "::error::values path '$path' is not a relative path inside the GitOps repository"; exit 1; }
+        yq_path="^(\.\"$segment\")+$"
+        [[ "$key" =~ $yq_path ]] || { echo "::error::values key '$key' is not a yq path"; exit 1; }
+        for v in "$tag" "$repository" "$ref" "$digest"; do
+          [[ -z "$v" || "$v" =~ $yq_path ]] || { echo "::error::values field '$v' is not a yq path"; exit 1; }
+        done
+        [[ -n "$tag$ref$digest" ]] || { echo "::error::the target writes no image field"; exit 1; }
+
+        {
+          echo "path=$path"; echo "key=$key"; echo "tag=$tag"
+          echo "repository=$repository"; echo "ref=$ref"; echo "digest=$digest"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Checkout GitOps Repository
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.git_token }}
+        ref: ${{ inputs.git_ref }}
+        path: ${{ inputs.checkout_path }}
+        sparse-checkout: ${{ steps.target.outputs.path }}
+        sparse-checkout-cone-mode: false
+        fetch-depth: 1
+
+    - name: Install yq
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v yq >/dev/null || {
+          sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/bin/yq
+        }
+
+    - name: Find the values file
+      id: find
+      shell: bash
+      working-directory: ${{ inputs.checkout_path }}
+      env:
+        VALUES_PATH: ${{ steps.target.outputs.path }}
+        KEY: ${{ steps.target.outputs.key }}
+        MUST_EXIST: ${{ inputs.must_exist }}
+      run: |
+        set -euo pipefail
+        # A file names itself; a directory holds exactly one file with the service under its key.
+        candidates=()
+        if [[ "$VALUES_PATH" =~ \.ya?ml$ ]]; then
+          candidates=("$VALUES_PATH")
+        else
+          for f in "$VALUES_PATH"/*.yaml "$VALUES_PATH"/*.yml; do candidates+=("$f"); done
+        fi
+        matches=()
+        for f in "${candidates[@]}"; do
+          [ -f "$f" ] || continue
+          if yq -e "$KEY" "$f" >/dev/null 2>&1; then matches+=("$f"); fi
+        done
+        if [ "${#matches[@]}" -ne 1 ]; then
+          msg="$KEY must be in exactly one values file under $VALUES_PATH, found ${#matches[@]}: ${matches[*]:-none}"
+          if [[ "$MUST_EXIST" == "true" ]]; then echo "::error::$msg"; exit 1; fi
+          echo "[INFO] - $msg"
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "found=true" >> "$GITHUB_OUTPUT"
+        echo "file=${matches[0]}" >> "$GITHUB_OUTPUT"
+        echo "✅ Values file: ${matches[0]} ($KEY)"

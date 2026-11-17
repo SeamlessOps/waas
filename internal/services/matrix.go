@@ -36,14 +36,16 @@ type Matrix struct {
 	// Source is the file the services came from, "" when deployed by name.
 	Source string `json:"source"`
 	// All are the services, each over its repository's defaults.
-	All []Entry `json:"all"`
+	All Entries `json:"all"`
 	// Environments are the services deploying to each environment.
-	Environments map[string][]Entry `json:"environments"`
+	Environments map[string]Entries `json:"environments"`
 	// Routes are the environments, with the branch that deploys to each for
 	// this repository: the file's, else DefaultRoutes.
-	Routes []Environment `json:"routes"`
+	Routes Environments `json:"routes"`
 	// Signing is how the images are signed; nil, not at all.
 	Signing *Signing `json:"signing,omitempty"`
+	// File is the services file read; nil when deployed by name.
+	File *File `json:"-"`
 }
 
 // Resolve finds what r deploys:
@@ -77,7 +79,7 @@ func Resolve(r Request) (*Matrix, error) {
 		return nil, err
 	}
 
-	m := &Matrix{Monorepo: r.Monorepo, Service: r.Service, Source: f.Path}
+	m := &Matrix{Monorepo: r.Monorepo, Service: r.Service, Source: f.Path, File: f}
 	picked := f.Services
 	switch {
 	case fromCatalog:
@@ -116,9 +118,9 @@ func Resolve(r Request) (*Matrix, error) {
 	if len(envs) == 0 {
 		envs = DefaultEnvironments
 	}
-	m.Environments = map[string][]Entry{}
+	m.Environments = map[string]Entries{}
 	for _, env := range envs {
-		m.Environments[env] = []Entry{}
+		m.Environments[env] = Entries{}
 		for i, e := range picked {
 			if slices.Contains(f.EnvironmentsOf(e), env) {
 				m.Environments[env] = append(m.Environments[env], m.All[i])
@@ -129,8 +131,8 @@ func Resolve(r Request) (*Matrix, error) {
 }
 
 func byName(r Request) *Matrix {
-	one := []Entry{{"name": r.Service}}
-	m := &Matrix{Monorepo: r.Monorepo, All: one, Environments: map[string][]Entry{}, Routes: defaultRoutes()}
+	one := Entries{{"name": r.Service}}
+	m := &Matrix{Monorepo: r.Monorepo, All: one, Environments: map[string]Entries{}, Routes: defaultRoutes()}
 	if !r.Monorepo {
 		m.Service = r.Service
 	}
@@ -161,8 +163,8 @@ func inCatalog(path, repo, service string) bool {
 
 // catalogEntries are repo's entries in f (only the one named service, when
 // it names one), else the first entry named service.
-func catalogEntries(f *File, repo, service string) []Entry {
-	var own []Entry
+func catalogEntries(f *File, repo, service string) Entries {
+	var own Entries
 	for _, e := range f.Services {
 		if e.Repository() == repo {
 			own = append(own, e)
@@ -177,8 +179,8 @@ func catalogEntries(f *File, repo, service string) []Entry {
 	return byNameIn(f.Services, service)[:1]
 }
 
-func byNameIn(entries []Entry, name string) []Entry {
-	var out []Entry
+func byNameIn(entries Entries, name string) Entries {
+	var out Entries
 	for _, e := range entries {
 		if e.Name() == name {
 			out = append(out, e)

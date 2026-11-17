@@ -1,13 +1,27 @@
 name: 'Update GitOps Values'
-description: 'Updates GitOps repository with new image tags'
+description: >-
+  Writes a service's new image into the GitOps repository: the fields its target names (the tag alone by default; the
+  repository, the full image or the digest when the services file says so), then commits and pushes.
 
 inputs:
   service:
-    description: 'Service name to update'
+    description: "The service's values key (e.g. api-staging), for the default target"
     required: true
   image_tag:
     description: 'New image tag to deploy'
     required: true
+  image_repository:
+    description: 'The image without its tag (registry/name), written where the target asks for the repository or the full image'
+    required: false
+    default: ''
+  image_digest:
+    description: 'The image digest (sha256:..., or name@sha256:...). Empty, and the target writes one: read from the registry'
+    required: false
+    default: ''
+  target:
+    description: 'Where the image is written, as waas plan gives it ("gitops"). Empty: the tag at services.<service>.tag'
+    required: false
+    default: ''
   environment:
     description: 'Environment to update'
     required: true
@@ -54,65 +68,64 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Set values path
-      id: values
-      shell: bash
-      run: |
-        echo "values_dir=environment/${{ inputs.environment }}" >> $GITHUB_OUTPUT
-
-    - name: Checkout GitOps Repository
-      uses: actions/checkout@v5
+    - name: Find the values
+      id: find
+      uses: rollwright/waas/workflow-templates/workload/shared/gitops-repo/values-target@main
       with:
-        repository: ${{ inputs.gitops_repo }}
-        token: ${{ inputs.git_token }}
-        ref: ${{ inputs.git_ref }}
-        sparse-checkout: ${{ steps.values.outputs.values_dir }}
-        sparse-checkout-cone-mode: false
-        fetch-depth: 1
+        target: ${{ inputs.target }}
+        service: ${{ inputs.service }}
+        environment: ${{ inputs.environment }}
+        git_token: ${{ inputs.git_token }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        git_ref: ${{ inputs.git_ref }}
 
-    - name: Install yq
+    - name: Write the image
+      id: write
       shell: bash
+      env:
+        FILE: ${{ steps.find.outputs.file }}
+        TAG_AT: ${{ steps.find.outputs.tag }}
+        REPOSITORY_AT: ${{ steps.find.outputs.repository }}
+        REF_AT: ${{ steps.find.outputs.ref }}
+        DIGEST_AT: ${{ steps.find.outputs.digest }}
+        IMAGE_TAG: ${{ inputs.image_tag }}
+        IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        IMAGE_DIGEST: ${{ inputs.image_digest }}
       run: |
         set -euo pipefail
-        sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-        sudo chmod +x /usr/bin/yq
-
-    - name: Find the values file
-      id: find
-      shell: bash
-      run: |
-        # The one file under environment/<env> that holds the service (one file per app, e.g. backend.yaml)
-        matches=()
-        for f in ${{ steps.values.outputs.values_dir }}/*.yaml; do
-          [ -f "$f" ] || continue
-          if yq -e '.services | has("${{ inputs.service }}")' "$f" >/dev/null 2>&1; then matches+=("$f"); fi
-        done
-        if [ "${#matches[@]}" -ne 1 ]; then
-          echo "::error::Service ${{ inputs.service }} must be in exactly one file under ${{ steps.values.outputs.values_dir }}, found ${#matches[@]}: ${matches[*]:-none}"
+        if [[ -n "$REPOSITORY_AT$REF_AT" && -z "$IMAGE_REPOSITORY" ]]; then
+          echo "::error::The target writes the image repository, and no image_repository was given"
           exit 1
         fi
-        echo "values_file=${matches[0]}" >> $GITHUB_OUTPUT
-        echo "✅ Values file for ${{ inputs.service }}: ${matches[0]}"
-
-    - name: Update Image Tag
-      shell: bash
-      run: |
-        values_file="${{ steps.find.outputs.values_file }}"
-
-        # Validate service exists
-        if ! yq eval ".services.${{ inputs.service }}" "$values_file" > /dev/null; then
-          echo "::error::Service ${{ inputs.service }} not found in values file"
+        export IMAGE_REF="$IMAGE_REPOSITORY:$IMAGE_TAG"
+        digest="${IMAGE_DIGEST##*@}"
+        if [[ -n "$DIGEST_AT" && -z "$digest" ]]; then
+          [[ -n "$IMAGE_REPOSITORY" ]] || { echo "::error::The target writes the digest: give image_digest or image_repository"; exit 1; }
+          digest=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest}}' | jq -r .digest)
+        fi
+        if [[ -n "$DIGEST_AT" && ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "::error::No digest for $IMAGE_REF ('$digest')"
           exit 1
         fi
+        export IMAGE_DIGEST="$digest"
 
-        # Update image tag
-        yq eval ".services.${{ inputs.service }}.tag = \"${{ inputs.image_tag }}\"" -i "$values_file"
+        # The paths are checked yq paths; the values go in through strenv, never into the expression.
+        [[ -n "$TAG_AT" ]]        && yq -i "$TAG_AT = strenv(IMAGE_TAG)" "$FILE"
+        [[ -n "$REPOSITORY_AT" ]] && yq -i "$REPOSITORY_AT = strenv(IMAGE_REPOSITORY)" "$FILE"
+        [[ -n "$REF_AT" ]]        && yq -i "$REF_AT = strenv(IMAGE_REF)" "$FILE"
+        [[ -n "$DIGEST_AT" ]]     && yq -i "$DIGEST_AT = strenv(IMAGE_DIGEST)" "$FILE"
+
+        # What was written, for the summary
+        shown="$IMAGE_TAG"
+        [[ -n "$REPOSITORY_AT$REF_AT" ]] && shown="$IMAGE_REF"
+        [[ -n "$DIGEST_AT" ]] && shown="$shown@$digest"
+        echo "image=$shown" >> "$GITHUB_OUTPUT"
 
     - name: Commit and Push Changes
       shell: bash
       id: update-gitops
       run: |
-        values_file="${{ steps.find.outputs.values_file }}"
+        values_file="${{ steps.find.outputs.file }}"
 
         git config user.name "${{ inputs.git_user_name }}"
         git config user.email "${{ inputs.git_user_email }}"
@@ -179,10 +192,10 @@ runs:
       shell: bash
       env:
         DASHBOARD_URL: ${{ inputs.dashboard_url }}
-        VALUES_FILE: ${{ steps.find.outputs.values_file }}
+        VALUES_FILE: ${{ steps.find.outputs.file }}
         SERVICE: ${{ inputs.service }}
         ENVIRONMENT: ${{ inputs.environment }}
-        IMAGE_TAG: ${{ inputs.image_tag }}
+        IMAGE_TAG: ${{ steps.write.outputs.image || inputs.image_tag }}
         RESULT: ${{ env.NO_CHANGES == 'true' && 'unchanged, the tag is already set' || inputs.result }}
       run: |
         app=$(basename "$VALUES_FILE" .yaml)

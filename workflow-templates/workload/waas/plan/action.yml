@@ -8,19 +8,19 @@ inputs:
     description: 'Project type (dotnet, nx, node, python, etc)'
     required: false
   services_file:
-    description: 'JSON file containing service definitions'
+    description: 'Services file (YAML or JSON). The extension may be left off: the one of .yaml, .yml or .json that exists is read'
     required: false
   services_dir:
     description: 'Directory containing service files'
     required: false
   catalog_file:
     description: >-
-      Shared services file, in services_dir. A repository without its own services file is looked up here: its
+      Shared services file (YAML or JSON, the extension optional), in services_dir. A repository without its own services file is looked up here: its
       entries are those whose "repository" is the repository's name (or, when none is, the entry whose "name" is
       the service input). One entry deploys as a polyrepo under the entry's "name"; several deploy as a monorepo.
       A service input naming one of the repository's entries picks that one.
     required: false
-    default: 'services.json'
+    default: 'services'
   repository:
     description: 'The repository name the catalog is searched by'
     required: false
@@ -178,7 +178,7 @@ runs:
           echo "  vault_addr: '<VAULT_ADDR>'" >> $GITHUB_STEP_SUMMARY
           echo "  vault_role: '<VAULT_ROLE>'" >> $GITHUB_STEP_SUMMARY
           echo "  vault_secret_path: '<VAULT_SECRET_PATH>'" >> $GITHUB_STEP_SUMMARY
-          echo "  services_file: '<service-file-name.json>'" >> $GITHUB_STEP_SUMMARY
+          echo "  services_file: '<service-file-name>'" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "_Note: \`load_default\` is true by default so you don't need to set it._" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -191,7 +191,7 @@ runs:
           echo "with:" >> $GITHUB_STEP_SUMMARY
           echo "  load_default: false" >> $GITHUB_STEP_SUMMARY
           echo "  services_dir: '<path-to-services-dir>'" >> $GITHUB_STEP_SUMMARY
-          echo "  services_file: '<service-file-name.json>'" >> $GITHUB_STEP_SUMMARY
+          echo "  services_file: '<service-file-name>'" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           exit 1
         else

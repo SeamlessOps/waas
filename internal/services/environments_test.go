@@ -30,7 +30,7 @@ func TestEnvironments_Parsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Environment{
+	want := Environments{
 		{Name: "uat", Branch: "develop", Domain: "shop-uat", BuildConfiguration: "Debug"},
 		{Name: "staging", Branch: "release", Domain: "shop-stg", BuildConfiguration: "Release"},
 		{Name: "production", Branch: "main", Domain: "shop", BuildConfiguration: "Release"},
@@ -45,7 +45,7 @@ func TestEnvironmentsFor_RepositoryBranchesReplaceTheFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	branches := func(envs []Environment) []string {
+	branches := func(envs Environments) []string {
 		var out []string
 		for _, e := range envs {
 			out = append(out, e.Name+"="+e.Branch)

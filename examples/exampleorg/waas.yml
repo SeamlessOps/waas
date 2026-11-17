@@ -29,18 +29,18 @@ on:
         default: 'unknown'
         type: string
       services_file:
-        description: 'JSON file containing service definitions.'
+        description: 'Services file (YAML or JSON). The extension may be left off: the one of .yaml, .yml or .json that exists is read'
         required: false
         type: string
-        default: '${{ github.event.repository.name }}.json'
+        default: '${{ github.event.repository.name }}'
       services_catalog:
         description: >-
-          Shared services file, in services_dir. A repository without its own services file is looked up here by its
+          Shared services file (YAML or JSON, the extension optional), in services_dir. A repository without its own services file is looked up here by its
           name: one entry deploys as a polyrepo under the entry's "name", several as a monorepo, and each entry
           carries its build options, so the calling workflow needs no inputs.
         required: false
         type: string
-        default: 'services.json'
+        default: 'services'
       services_dir:
         description: 'Directory containing service files'
         required: false
@@ -217,6 +217,8 @@ jobs:
           promote: ${{ inputs.promote && matrix.service.promote != false }}
           promote_from_service: ${{ needs.plan.outputs.promote_from_environment != '' && format('{0}-{1}', env.SERVICE, needs.plan.outputs.promote_from_domain) || '' }}
           promote_from_environment: ${{ needs.plan.outputs.promote_from_environment }}
+          gitops: ${{ matrix.service.gitops && toJSON(matrix.service.gitops) || '' }}
+          promote_from_gitops: ${{ matrix.service.gitops_from && toJSON(matrix.service.gitops_from) || '' }}
           vault_addr: ${{ secrets.VAULT_ADDR }}
           vault_role: ${{ secrets.VAULT_ROLE }}
           vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}

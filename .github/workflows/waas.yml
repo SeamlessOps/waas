@@ -23,10 +23,17 @@ on:
         type: string
         default: '22.2.x'
       services_file:
-        description: 'JSON file containing service definitions.'
+        description: 'Services file (YAML or JSON). The extension may be left off: the one of .yaml, .yml or .json that exists is read'
         required: false
         type: string
-        default: '${{ github.event.repository.name }}.json'
+        default: '${{ github.event.repository.name }}'
+      services_catalog:
+        description: >-
+          Shared services file (YAML or JSON, the extension optional), in services_dir. A repository without its own
+          services file is looked up here by its name.
+        required: false
+        type: string
+        default: 'services'
       services_dir:
         description: 'Directory containing service files'
         required: false
@@ -101,6 +108,7 @@ jobs:
           monorepo: ${{ inputs.monorepo }}
           service: ${{ inputs.service }}
           services_file: ${{ inputs.services_file }}
+          catalog_file: ${{ inputs.services_catalog }}
           services_dir: ${{ inputs.services_dir }}
           load_default: ${{ inputs.load_default }}
           project_type: ${{ inputs.project_type }}
@@ -150,6 +158,7 @@ jobs:
           nx_project: ${{ env.NX_PROJECT }}
           project_type: ${{ env.PROJECT_TYPE }}
           service: ${{ env.SERVICE }}-${{ env.DOMAIN }}
+          gitops: ${{ matrix.service.gitops && toJSON(matrix.service.gitops) || '' }}
           dashboard_url: ${{ inputs.dashboard_url }}
           signing_key: ${{ needs.plan.outputs.signing_key }}
           signing_keyless: ${{ needs.plan.outputs.signing_keyless }}

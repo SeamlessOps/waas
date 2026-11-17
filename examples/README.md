@@ -5,7 +5,7 @@
 The smallest setup: a service repository calls WaaS's workflow, and one services file in the GitOps repository says what each repository deploys.
 
 - [`deploy.yml`](minimal/deploy.yml) is the whole workflow a service repository needs.
-- [`services/services.json`](minimal/services/services.json) declares two environments (`dev` to staging, `main` to production), defaults for two repositories, three services, and keyless image signing. `shop-api` deploys from `develop` instead of `dev`.
+- [`services/services.yaml`](minimal/services/services.yaml) declares two environments (`dev` to staging, `main` to production), defaults for two repositories, three services, and keyless image signing. `shop-api` deploys from `develop` instead of `dev`, and its chart takes `image.repository` and `image.tag`, so WaaS writes both (`values`); `shop-web` keeps the default, the tag alone. [`services/services.json`](minimal/services/services.json) is the same file in JSON; `deploy.yml` names `services.yaml` as the catalog, so the two can sit side by side.
 
 ## exampleorg
 
@@ -18,6 +18,8 @@ A real platform, renamed. ExampleOrg runs about twenty services from twelve repo
 **Branches pick the environment.** A merge into `dev` deploys to staging, built as `Release`; a merge into `main` deploys to production, built as `Production`. Each environment has its own domain, which completes a service's values key (`api-exampleorg-dev`).
 
 **Production reuses staging's image.** When `main` receives the code staging already runs, production gets staging's image, verified and copied, instead of a new build.
+
+**The chart knows the registry.** The image repository is set once in the values, not per service, so ExampleOrg uses the default `values`: WaaS writes each service's tag alone, at `services.<name>-<domain>.tag`.
 
 **Every image is signed.** Images are signed with a Cloud KMS key (`metadata.signing.key`): before an image's tag reaches the GitOps repository, and again when it is promoted. A promotion verifies the source image first. Nothing goes to a public transparency log, and a cluster admission policy can check the same key.
 

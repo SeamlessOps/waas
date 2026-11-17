@@ -34,7 +34,7 @@ func write(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-func names(entries []Entry) []string {
+func names(entries Entries) []string {
 	out := []string{}
 	for _, e := range entries {
 		out = append(out, e.Name())
