@@ -66,7 +66,7 @@ inputs:
     default: ''
 
   dashboard_url:
-    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
     default: ''
   signing_key:
@@ -268,6 +268,7 @@ runs:
     # Signed before its tag is written: an image that can't be signed never
     # lands in the GitOps repository.
     - name: Sign the image
+      id: sign
       uses: rollwright/waas/workflow-templates/shared/sign-image@main
       with:
         image: ${{ steps.build-and-publish.outputs.image_uri }}
@@ -285,5 +286,6 @@ runs:
         git_token: ${{ inputs.git_token }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        result: ${{ steps.sign.outputs.signed == 'true' && 'built and signed' || 'built' }}
         dashboard_url: ${{ inputs.dashboard_url }}
 

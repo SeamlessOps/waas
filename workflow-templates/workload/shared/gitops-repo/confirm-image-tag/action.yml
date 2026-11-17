@@ -24,7 +24,7 @@ inputs:
     required: false
     default: 'main'
   dashboard_url:
-    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
     default: ''
 
@@ -99,34 +99,48 @@ runs:
         fi
 
     - name: Add Success Message
-      if: success()
+      if: success() && steps.confirm-image-tag.outputs.no-changes == 'true'
       shell: bash
       env:
         DASHBOARD_URL: ${{ inputs.dashboard_url }}
+        VALUES_FILE: ${{ steps.find.outputs.values_file }}
+        SERVICE: ${{ inputs.service }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGE_TAG: ${{ inputs.image_tag }}
+        RESULT: unchanged, the tag is already set
       run: |
-        if [ "$NO_CHANGES" = "true" ]; then
-          echo "## ✅ GitOps Update Complete" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 Status" >> $GITHUB_STEP_SUMMARY
-          echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ✅ No changes needed - image tag already set to \`${{ inputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The deployment is up-to-date!" >> $GITHUB_STEP_SUMMARY
-
+        app=$(basename "$VALUES_FILE" .yaml)
+        {
+          echo "## Deploy"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Service | \`$SERVICE\` |"
+          echo "| Environment | $ENVIRONMENT |"
+          echo "| Image | \`$IMAGE_TAG\` |"
+          echo "| Commit | \`${GITHUB_SHA::7}\` |"
+          echo "| Result | $RESULT |"
+          echo "| GitOps | \`$VALUES_FILE\` |"
           if [[ -n "$DASHBOARD_URL" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "[View the deployment](${DASHBOARD_URL//\{environment\}/${{ inputs.environment }}})" >> $GITHUB_STEP_SUMMARY
+            url="${DASHBOARD_URL//\{environment\}/$ENVIRONMENT}"
+            echo ""
+            echo "[View the deployment](${url//\{app\}/$app})"
           fi
-        fi
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Add Failure Message
       if: failure()
       shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        ENVIRONMENT: ${{ inputs.environment }}
       run: |
-        echo "## ❌ Image Confirmation Failed" >> $GITHUB_STEP_SUMMARY
-        echo "### Environment: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "Please check the build logs for errors and try again." >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "[View Failed Build](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+        {
+          echo "## Deploy failed"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Service | \`$SERVICE\` |"
+          echo "| Environment | $ENVIRONMENT |"
+          echo "| Run | [logs]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) |"
+        } >> "$GITHUB_STEP_SUMMARY"

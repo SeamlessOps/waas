@@ -37,7 +37,7 @@ inputs:
     required: true
 
   dashboard_url:
-    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
     default: ''
   signing_key:
@@ -162,11 +162,7 @@ runs:
         set -euo pipefail
         # A manifest copy inside one registry: the layers are mounted, not pulled and pushed again
         docker buildx imagetools create --tag "$DST" "$SRC"
-        echo "[INFO] - ✅ Promoted $SRC -> $DST"
-        {
-          echo "## 🚀 Promoted, not rebuilt"
-          echo "**$SRC** → **$DST**"
-        } >> "$GITHUB_STEP_SUMMARY"
+        echo "[INFO] - Promoted $SRC -> $DST"
 
     - name: Sign the promoted image
       id: sign
@@ -189,4 +185,5 @@ runs:
         git_token: ${{ inputs.git_token }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        result: ${{ steps.sign.outputs.signed == 'true' && format('promoted from {0} and signed', inputs.source_environment) || format('promoted from {0}', inputs.source_environment) }}
         dashboard_url: ${{ inputs.dashboard_url }}

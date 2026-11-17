@@ -86,7 +86,7 @@ inputs:
     default: ''
 
   dashboard_url:
-    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD); {environment} and {app} (the values file the service is in, environment/<environment>/<app>.yaml) are filled in. Empty: no link"
     required: false
     default: ''
   signing_key:

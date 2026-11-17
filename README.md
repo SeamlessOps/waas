@@ -63,7 +63,7 @@ WaaS has no releases yet; workflows and actions are referenced at `@main`.
 | `dockerfile` | `Dockerfile` | Dockerfile to build |
 | `dotnet_version` | `9.0.x` | .NET SDK version |
 | `node_version` | `22.2.x` | Node.js version |
-| `dashboard_url` | none | Link to a deployment in the GitOps controller, `{environment}` replaced; shown in the run's summary |
+| `dashboard_url` | none | Link to a deployment in the GitOps controller, shown in the run's summary. `{environment}` and `{app}` are filled in; `{app}` is the values file the service is in (`environment/<environment>/<app>.yaml`), so one Argo CD application per file links as `https://argocd.example.com/applications/argocd/apps-{app}-{environment}` |
 | `dry-run` | `false` | Plan without deploying |
 
 ## The services file
