@@ -42,46 +42,6 @@ on:
         required: false
         type: string
         default: 'Dockerfile'
-      staging_env:
-        description: 'Staging environment name'
-        required: false
-        type: string
-        default: 'staging'
-      production_env:
-        description: 'Production environment name'
-        required: false
-        type: string
-        default: 'production'
-      staging_domain:
-        description: "Staging domain, when the services file declares no environments: a service's values key is <name>-<domain>"
-        required: false
-        type: string
-        default: 'staging'
-      production_domain:
-        description: 'Production domain, when the services file declares no environments'
-        required: false
-        type: string
-        default: 'production'
-      staging_branch:
-        description: 'Branch that deploys to staging, when the services file declares no environments'
-        required: false
-        type: string
-        default: 'dev'
-      production_branch:
-        description: 'Branch that deploys to production, when the services file declares no environments'
-        required: false
-        type: string
-        default: 'main'
-      staging_config:
-        description: 'Build configuration for staging, when the services file declares no environments'
-        required: false
-        type: string
-        default: 'Release'
-      production_config:
-        description: 'Build configuration for production, when the services file declares no environments'
-        required: false
-        type: string
-        default: 'Release'
       monorepo:
         description: 'Monorepo identifier'
         required: false
@@ -106,33 +66,40 @@ jobs:
   # ----------------------------------------
   # Step 1: PR Validation and Security Scan
   # ----------------------------------------
-  validate-pr:
+  validate:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR Branch Rules
-        id: validate-pr
+        id: validate
         uses: rollwright/waas/workflow-templates/shared/validate-pull-request@main
 
   # -----------------------------
-  # Step 2: Load Services Matrix
+  # Step 2: Plan
   # -----------------------------
-  load-services:
+  plan:
     if: >
       contains(github.event.head_commit.message, 'Merge pull request #')
     runs-on: ubuntu-latest
     outputs:
-      staging-services: ${{ steps.load-services-matrix.outputs.staging-services }}
-      production-services: ${{ steps.load-services-matrix.outputs.production-services }}
-      services: ${{ steps.load-services-matrix.outputs.services }}
-      environments: ${{ steps.load-services-matrix.outputs.environments }}
-      regular-service: ${{ steps.load-services-matrix.outputs.regular-service }}
+      deploy: ${{ steps.plan.outputs.deploy }}
+      environment: ${{ steps.plan.outputs.environment }}
+      domain: ${{ steps.plan.outputs.domain }}
+      config: ${{ steps.plan.outputs.config }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      promote_from_environment: ${{ steps.plan.outputs.promote_from_environment }}
+      promote_from_domain: ${{ steps.plan.outputs.promote_from_domain }}
+      signing_key: ${{ steps.plan.outputs.signing_key }}
+      signing_keyless: ${{ steps.plan.outputs.signing_keyless }}
+      signing_identity: ${{ steps.plan.outputs.signing_identity }}
+      signing_issuer: ${{ steps.plan.outputs.signing_issuer }}
     steps:      
-      - name: Load services matrix
-        id: load-services-matrix
-        uses: rollwright/waas/workflow-templates/workload/utils/load-services-matrix@main
+      - name: Plan
+        id: plan
+        uses: rollwright/waas/workflow-templates/workload/waas/plan@main
         with:
           monorepo: ${{ inputs.monorepo }}
+          service: ${{ inputs.service }}
           services_file: ${{ inputs.services_file }}
           services_dir: ${{ inputs.services_dir }}
           load_default: ${{ inputs.load_default }}
@@ -142,77 +109,38 @@ jobs:
           vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
 
   # --------------------------
-  # Step 3: Dynamic Routing
+  # Step 3: Dynamic Deployment
   # --------------------------
-  #       R O U T E R
-  # --------------------------
-  waas-router:
-    needs: [load-services]
-    # The router decides whether the branch deploys: deploy is false for a
-    # branch no environment takes.
-    if: >
-      contains(github.event.head_commit.message, 'Merge pull request #')
-    runs-on: ubuntu-latest
-    outputs:
-      deploy: ${{ steps.waas-router.outputs.deploy }}
-      promote_from_environment: ${{ steps.waas-router.outputs.promote_from_environment }}
-      promote_from_domain: ${{ steps.waas-router.outputs.promote_from_domain }}
-      config: ${{ steps.waas-router.outputs.config }}
-      domain: ${{ steps.waas-router.outputs.domain }}
-      environment: ${{ steps.waas-router.outputs.environment }}
-      matrix: ${{ steps.waas-router.outputs.matrix }}
-      service: ${{ steps.waas-router.outputs.service }}
-    steps:
-      - name: WaaS Router
-        id: waas-router
-        uses: rollwright/waas/workflow-templates/workload/waas/router@main
-        with:
-          monorepo: ${{ inputs.monorepo }}
-          environments: ${{ needs.load-services.outputs.environments }}
-          services: ${{ needs.load-services.outputs.services }}
-          staging_env: ${{ inputs.staging_env }}
-          staging_branch: ${{ inputs.staging_branch }}
-          staging_domain: ${{ inputs.staging_domain }}
-          staging_config: ${{ inputs.staging_config }}
-          production_env: ${{ inputs.production_env }}
-          production_branch: ${{ inputs.production_branch }}
-          production_domain: ${{ inputs.production_domain }}
-          production_config: ${{ inputs.production_config }}
-          service: ${{ needs.load-services.outputs.regular-service || inputs.service }}
-
-  # --------------------------
-  # Step 4: Dynamic Deployment
-  # --------------------------
-  waas-deployer:
-    name: deploy-${{ needs.waas-router.outputs.environment }} (${{ matrix.service.name }})
-    needs: [waas-router]
-    environment: ${{ needs.waas-router.outputs.environment }}
+  deploy:
+    name: deploy-${{ needs.plan.outputs.environment }} (${{ matrix.service.name }})
+    needs: [plan]
+    environment: ${{ needs.plan.outputs.environment }}
     runs-on: ubuntu-latest
     if: >
-      inputs.dry-run == false && needs.waas-router.outputs.deploy == 'true' &&
-      needs.waas-router.outputs.matrix != '[]'
+      inputs.dry-run == false && needs.plan.outputs.deploy == 'true' &&
+      needs.plan.outputs.matrix != '[]'
     env:
       PROJECT_TYPE: ${{ inputs.project_type }}
-      CONFIG: ${{ needs.waas-router.outputs.config }}
+      CONFIG: ${{ needs.plan.outputs.config }}
       DIRECTORY: ${{ matrix.service.directory }}
       DOTNET_VERSION: ${{ inputs.dotnet_version }}
-      DOMAIN: ${{ needs.waas-router.outputs.domain }}
-      ENVIRONMENT: ${{ needs.waas-router.outputs.environment }}
+      DOMAIN: ${{ needs.plan.outputs.domain }}
+      ENVIRONMENT: ${{ needs.plan.outputs.environment }}
       SERVICE: ${{ matrix.service.name }}
       NX_PROJECT: ${{ matrix.service.nx_project || matrix.service.name }}
     strategy:
       matrix:
-        service: ${{ fromJson(needs.waas-router.outputs.matrix) }}
+        service: ${{ fromJson(needs.plan.outputs.matrix) }}
       fail-fast: false
     outputs:
-      duration: ${{ steps.waas-deployer.outputs.duration }}
-      no-changes: ${{ steps.waas-deployer.outputs.no-changes }}
+      duration: ${{ steps.deploy.outputs.duration }}
+      no-changes: ${{ steps.deploy.outputs.no-changes }}
       environment: ${{ env.ENVIRONMENT }}
       service: ${{ env.SERVICE }}
     steps:
       - name: Deploy ${{ env.SERVICE }} to ${{ env.ENVIRONMENT }}
-        id: waas-deployer
-        uses: rollwright/waas/workflow-templates/workload/waas/deployer@main
+        id: deploy
+        uses: rollwright/waas/workflow-templates/workload/waas/deploy@main
         with:
           build_configuration: ${{ env.CONFIG }}
           environment: ${{ env.ENVIRONMENT }}
@@ -223,6 +151,10 @@ jobs:
           project_type: ${{ env.PROJECT_TYPE }}
           service: ${{ env.SERVICE }}-${{ env.DOMAIN }}
           dashboard_url: ${{ inputs.dashboard_url }}
+          signing_key: ${{ needs.plan.outputs.signing_key }}
+          signing_keyless: ${{ needs.plan.outputs.signing_keyless }}
+          signing_identity: ${{ needs.plan.outputs.signing_identity }}
+          signing_issuer: ${{ needs.plan.outputs.signing_issuer }}
           vault_addr: ${{ secrets.VAULT_ADDR }}
           vault_role: ${{ secrets.VAULT_ROLE }}
           vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
@@ -230,14 +162,14 @@ jobs:
   # ----------------------------
   # Step 4: Slack Notification
   # ----------------------------
-  slack-notify-deployment:
-    needs: [waas-router, waas-deployer]
+  notify:
+    needs: [plan, deploy]
     name: notify-slack
     runs-on: ubuntu-latest
     if: >
-      always() && inputs.dry-run == false && needs.waas-router.outputs.deploy == 'true' &&
+      always() && inputs.dry-run == false && needs.plan.outputs.deploy == 'true' &&
       github.event_name != 'pull_request' && 
-      needs.waas-deployer.outputs.no-changes != 'true' 
+      needs.deploy.outputs.no-changes != 'true' 
     steps:
       - name: Notify Slack
         id: slack-notify
@@ -245,7 +177,7 @@ jobs:
         with:
           workflow_type: workload
           service: ${{ github.event.repository.name }}
-          environment: ${{ needs.waas-deployer.outputs.environment }}
-          status: ${{ needs.waas-deployer.result }}
-          needs_result: ${{ needs.waas-deployer.result }}
+          environment: ${{ needs.deploy.outputs.environment }}
+          status: ${{ needs.deploy.result }}
+          needs_result: ${{ needs.deploy.result }}
           webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY }}

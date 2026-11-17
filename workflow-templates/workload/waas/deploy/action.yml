@@ -1,4 +1,4 @@
-name: '.NET Action: WaaS Deployer'
+name: 'WaaS Deploy'
 description: 'Deploys workload to multiple configured environments'
 inputs:
   service:
@@ -89,6 +89,22 @@ inputs:
     description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
     required: false
     default: ''
+  signing_key:
+    description: 'A cosign key reference to sign images with (gcpkms://...). Empty, and signing_keyless not true: not signed'
+    required: false
+    default: ''
+  signing_keyless:
+    description: "'true': sign keyless with the workflow's GitHub identity"
+    required: false
+    default: ''
+  signing_identity:
+    description: "Keyless signing: a regular expression of the workflow identities trusted to sign"
+    required: false
+    default: ''
+  signing_issuer:
+    description: 'Keyless signing: the OIDC issuer'
+    required: false
+    default: 'https://token.actions.githubusercontent.com'
 
 outputs:
   duration:
@@ -132,6 +148,10 @@ runs:
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
         dashboard_url: ${{ inputs.dashboard_url }}
+        signing_key: ${{ inputs.signing_key }}
+        signing_keyless: ${{ inputs.signing_keyless }}
+        signing_identity: ${{ inputs.signing_identity }}
+        signing_issuer: ${{ inputs.signing_issuer }}
         github_token: ${{ github.token }}
 
     - name: Confirm if Image Tag Needs Update
@@ -243,6 +263,10 @@ runs:
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
         dashboard_url: ${{ inputs.dashboard_url }}
+        signing_key: ${{ inputs.signing_key }}
+        signing_keyless: ${{ inputs.signing_keyless }}
+        signing_identity: ${{ inputs.signing_identity }}
+        signing_issuer: ${{ inputs.signing_issuer }}
         nx_project: ${{ inputs.nx_project }}
         project_type: ${{ inputs.project_type }}
         service: ${{ inputs.service }}

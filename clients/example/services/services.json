@@ -1,6 +1,7 @@
 {
   "metadata": {
     "description": "Every repository's services, one entry per service",
+    "signing": { "keyless": { "enabled": true } },
     "environments": [
       { "name": "staging", "branch": "dev", "domain": "shop-staging", "build_configuration": "Release" },
       { "name": "production", "branch": "main", "domain": "shop", "build_configuration": "Release" }
