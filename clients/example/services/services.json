@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "description": "Every repository's services, one entry per service",
+    "environments": [
+      { "name": "staging", "branch": "dev", "domain": "shop-staging", "build_configuration": "Release" },
+      { "name": "production", "branch": "main", "domain": "shop", "build_configuration": "Release" }
+    ]
+  },
+  "repositories": {
+    "shop-web": {
+      "project_type": "nx",
+      "service_type": "frontend",
+      "version": { "node": "22.x" }
+    },
+    "shop-api": {
+      "project_type": "dotnet",
+      "service_type": "backend",
+      "version": { "dotnet": "9.0.x" },
+      "branches": { "develop": "staging", "main": "production" }
+    }
+  },
+  "services": [
+    { "repository": "shop-web", "name": "storefront" },
+    { "repository": "shop-web", "name": "admin", "environments": ["staging"] },
+    { "repository": "shop-api", "name": "api", "directory": "src/Api" }
+  ]
+}

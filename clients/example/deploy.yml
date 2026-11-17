@@ -1,0 +1,18 @@
+# A service repository's workflow: .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  deploy:
+    uses: rollwright/waas/.github/workflows/waas.yml@main
+    with:
+      project_type: nx
+      # Where the services file lives, in the GitOps repository.
+      services_dir: services
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit

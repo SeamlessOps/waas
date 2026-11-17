@@ -53,20 +53,45 @@ on:
         type: string
         default: 'production'
       staging_domain:
-        description: 'Staging domain identifier'
+        description: "Staging domain, when the services file declares no environments: a service's values key is <name>-<domain>"
         required: false
         type: string
-        default: 'ondgo-dev'
+        default: 'staging'
       production_domain:
-        description: 'Production domain identifier'
+        description: 'Production domain, when the services file declares no environments'
         required: false
         type: string
-        default: 'ondgo-ng'
+        default: 'production'
+      staging_branch:
+        description: 'Branch that deploys to staging, when the services file declares no environments'
+        required: false
+        type: string
+        default: 'dev'
+      production_branch:
+        description: 'Branch that deploys to production, when the services file declares no environments'
+        required: false
+        type: string
+        default: 'main'
+      staging_config:
+        description: 'Build configuration for staging, when the services file declares no environments'
+        required: false
+        type: string
+        default: 'Release'
+      production_config:
+        description: 'Build configuration for production, when the services file declares no environments'
+        required: false
+        type: string
+        default: 'Release'
       monorepo:
         description: 'Monorepo identifier'
         required: false
         type: boolean
         default: true
+      dashboard_url:
+        description: "Link to a deployment in the GitOps controller (e.g. Argo CD), {environment} replaced; shown in the run's summary. Empty: no link"
+        required: false
+        type: string
+        default: ''
       service:
         description: 'Service name. Required if monorepo is disabled'
         required: false
@@ -94,12 +119,13 @@ jobs:
   # -----------------------------
   load-services:
     if: >
-      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
       contains(github.event.head_commit.message, 'Merge pull request #')
     runs-on: ubuntu-latest
     outputs:
       staging-services: ${{ steps.load-services-matrix.outputs.staging-services }}
       production-services: ${{ steps.load-services-matrix.outputs.production-services }}
+      services: ${{ steps.load-services-matrix.outputs.services }}
+      environments: ${{ steps.load-services-matrix.outputs.environments }}
       regular-service: ${{ steps.load-services-matrix.outputs.regular-service }}
     steps:      
       - name: Load services matrix
@@ -122,11 +148,15 @@ jobs:
   # --------------------------
   waas-router:
     needs: [load-services]
+    # The router decides whether the branch deploys: deploy is false for a
+    # branch no environment takes.
     if: >
-      contains(github.event.head_commit.message, 'Merge pull request #') &&
-      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+      contains(github.event.head_commit.message, 'Merge pull request #')
     runs-on: ubuntu-latest
     outputs:
+      deploy: ${{ steps.waas-router.outputs.deploy }}
+      promote_from_environment: ${{ steps.waas-router.outputs.promote_from_environment }}
+      promote_from_domain: ${{ steps.waas-router.outputs.promote_from_domain }}
       config: ${{ steps.waas-router.outputs.config }}
       domain: ${{ steps.waas-router.outputs.domain }}
       environment: ${{ steps.waas-router.outputs.environment }}
@@ -138,13 +168,17 @@ jobs:
         uses: rollwright/waas/workflow-templates/workload/waas/router@main
         with:
           monorepo: ${{ inputs.monorepo }}
-          staging_domain: ${{ inputs.staging_domain }}
-          production_domain: ${{ inputs.production_domain }}
+          environments: ${{ needs.load-services.outputs.environments }}
+          services: ${{ needs.load-services.outputs.services }}
           staging_env: ${{ inputs.staging_env }}
+          staging_branch: ${{ inputs.staging_branch }}
+          staging_domain: ${{ inputs.staging_domain }}
+          staging_config: ${{ inputs.staging_config }}
           production_env: ${{ inputs.production_env }}
+          production_branch: ${{ inputs.production_branch }}
+          production_domain: ${{ inputs.production_domain }}
+          production_config: ${{ inputs.production_config }}
           service: ${{ needs.load-services.outputs.regular-service || inputs.service }}
-          staging_services: ${{ needs.load-services.outputs.staging-services }}
-          production_services: ${{ needs.load-services.outputs.production-services }}
 
   # --------------------------
   # Step 4: Dynamic Deployment
@@ -154,7 +188,9 @@ jobs:
     needs: [waas-router]
     environment: ${{ needs.waas-router.outputs.environment }}
     runs-on: ubuntu-latest
-    if: inputs.dry-run == false
+    if: >
+      inputs.dry-run == false && needs.waas-router.outputs.deploy == 'true' &&
+      needs.waas-router.outputs.matrix != '[]'
     env:
       PROJECT_TYPE: ${{ inputs.project_type }}
       CONFIG: ${{ needs.waas-router.outputs.config }}
@@ -186,6 +222,7 @@ jobs:
           nx_project: ${{ env.NX_PROJECT }}
           project_type: ${{ env.PROJECT_TYPE }}
           service: ${{ env.SERVICE }}-${{ env.DOMAIN }}
+          dashboard_url: ${{ inputs.dashboard_url }}
           vault_addr: ${{ secrets.VAULT_ADDR }}
           vault_role: ${{ secrets.VAULT_ROLE }}
           vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
@@ -194,11 +231,11 @@ jobs:
   # Step 4: Slack Notification
   # ----------------------------
   slack-notify-deployment:
-    needs: [waas-deployer]
+    needs: [waas-router, waas-deployer]
     name: notify-slack
     runs-on: ubuntu-latest
     if: >
-      always() && inputs.dry-run == false && 
+      always() && inputs.dry-run == false && needs.waas-router.outputs.deploy == 'true' &&
       github.event_name != 'pull_request' && 
       needs.waas-deployer.outputs.no-changes != 'true' 
     steps:

@@ -7,10 +7,10 @@ description: >-
 
 inputs:
   service:
-    description: 'Service values key to update (e.g. api-ondgo-ng); also its image name'
+    description: 'Service values key to update (e.g. api-production); also its image name'
     required: true
   source_service:
-    description: 'Values key, and image name, of the service in the source environment (e.g. api-ondgo-dev)'
+    description: 'Values key, and image name, of the service in the source environment (e.g. api-staging)'
     required: true
   source_environment:
     description: 'Environment whose image is promoted (e.g. staging)'
@@ -35,6 +35,11 @@ inputs:
   github_token:
     description: "Token to compare commits in the calling repository (the workflow's GITHUB_TOKEN)"
     required: true
+
+  dashboard_url:
+    description: "Link to the deployment in the GitOps controller (e.g. Argo CD), {environment} replaced. Empty: no link"
+    required: false
+    default: ''
 
 outputs:
   promoted:
@@ -143,3 +148,4 @@ runs:
         git_token: ${{ inputs.git_token }}
         gitops_repo: ${{ inputs.gitops_repo }}
         git_ref: ${{ inputs.git_ref }}
+        dashboard_url: ${{ inputs.dashboard_url }}

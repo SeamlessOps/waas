@@ -26,7 +26,7 @@ global:
 
   # Prometheus metrics configuration for AnalysisRun
   prometheus:
-    host: "ondgo-core-kube-prometheus-prometheus.ondgo-monitoring"
+    host: "kube-prometheus-prometheus.monitoring"
     port: 9090
 
 # Global Secrets and ConfigMaps envFrom
@@ -57,8 +57,8 @@ rollout:
 
 # Environment-specific values
 environment: staging              # or production, development, etc.
-namespace: ondgo-rollouts
-domainSuffix: ondgo.dev
+namespace: rollouts
+domainSuffix: example.dev
 
 # Default ingress configuration
 # Creates ingress with a list of hosts or by default using the 'service_name.domainSuffix'
@@ -115,8 +115,8 @@ services:
     workload: deployment
     autoscale: false
     hosts:
-      - host4.ondgo.ng
-      - host5.ondgo.dev
+      - host4.example.com
+      - host5.example.dev
 
   # No ingress deployment example
   no-ingress-deployment-workload-example:
@@ -177,8 +177,8 @@ services:
         blueGreen:
           enabled: true
     hosts:
-      active: green.ondgo.ng
-      preview: blue.ondgo.ng
+      active: green.example.com
+      preview: blue.example.com
 
   # Canary rollout example with analysis
   canary-rollout-with-analysis-example:
@@ -220,9 +220,9 @@ services:
                   - name: ingress
                     value: canary-rollout-example
                   - name: namespace
-                    value: ondgo-rollouts
+                    value: rollouts
                   - name: prometheusURL
-                    value: http://ondgo-core-kube-prometheus-prometheus.ondgo-monitoring:9090
+                    value: http://kube-prometheus-prometheus.monitoring:9090
             - pause: {}
             - setWeight: 80
             - pause: {duration: 10}
@@ -233,9 +233,9 @@ services:
     enabled: false
     tag: build-46-sha-4086d06
     hosts:
-      - host1.ondgo.ng
-      - host2.ondgo.dev
-      - host3.ondgo.ng
+      - host1.example.com
+      - host2.example.dev
+      - host3.example.com
     rollout:
       strategy:
         blueGreen:

@@ -1,6 +1,6 @@
-# ondgo-products Workflows
+# WaaS workflow actions
 
-This repository contains reusable **GitHub composite actions** for secure authentication, language-specific builds, container image publishing, and GitOps integration. These workflows are designed to streamline CI/CD pipelines for .NET, Nx, and future languages in the ondgo-products ecosystem.
+This repository contains reusable **GitHub composite actions** for secure authentication, language-specific builds, container image publishing, and GitOps integration. These workflows streamline CI/CD pipelines for .NET, Nx and other languages.
 
 ---
 
@@ -128,9 +128,9 @@ jobs:
       - name: Deploy to staging
         uses: rollwright/waas/workflow-templates/workload/templates/general-purpose@main
         with:
-          service: identity-ondgo-ng
+          service: identity-production
           environment: staging
-          dockerfile: ondgo.identity/Dockerfile.dev
+          dockerfile: identity/Dockerfile
           vault_addr: ${{ secrets.VAULT_ADDR }}
           vault_role: ${{ secrets.VAULT_ROLE }}
           vault_secret_path: ${{ secrets.VAULT_SECRET_PATH }}
